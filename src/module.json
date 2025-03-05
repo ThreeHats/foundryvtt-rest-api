@@ -16,7 +16,7 @@
       "path": "languages/en.json"
     }
   ],
-  "styles": ["style.css"],
+  "styles": ["styles/style.css"],
   "esmodules": ["scripts/module.js"],
   "relationships": {
     "requires": [

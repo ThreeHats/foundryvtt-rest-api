@@ -39,12 +39,13 @@ export default defineConfig({
     scss({
       output: function(styles) {
         // Write to FoundryVTT path for development
-        // if (!process.env.CI) {
-        //   fsPromises.writeFile(path.join(foundryVttDataPath, moduleId, "style.css"), styles);
-        // }
+        if (!process.env.CI) {
+          fsPromises.writeFile(path.join(foundryVttDataPath, moduleId, "styles/style.css"), styles);
+        }
         // Always write to dist for CI
         fsPromises.mkdir("dist", { recursive: true })
-          .then(() => fsPromises.writeFile("dist/style.css", styles));
+          .then(() =>  fsPromises.mkdir("dist/styles", { recursive: true }))
+          .then(() => fsPromises.writeFile("dist/styles/style.css", styles));
       },
       sourceMap: true,
       watch: ["src/styles/*.scss"],
