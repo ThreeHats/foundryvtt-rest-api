@@ -44,7 +44,7 @@ export default defineConfig({
         }
         // Always write to dist for CI
         fsPromises.mkdir("dist", { recursive: true })
-          .then(() => fsPromises.writeFile("dist/style.css", styles));
+          .then(() => fsPromises.writeFile("dist/styles/style.css", styles));
       },
       sourceMap: true,
       watch: ["src/styles/*.scss"],
