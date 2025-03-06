@@ -18,13 +18,5 @@
   ],
   "styles": ["styles/style.css"],
   "esmodules": ["scripts/module.js"],
-  "relationships": {
-    "requires": [
-      {
-        "id": "quick-insert",
-        "type": "module",
-        "compatibility": {}
-      }
-    ]
-  }
+  "relationships": {}
 }
