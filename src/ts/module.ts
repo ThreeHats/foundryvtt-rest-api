@@ -1,7 +1,7 @@
 // src/ts/module.ts
 import "../styles/style.scss";
 import { FoundryRestApi } from "./types";
-import { moduleId, recentRolls, MAX_ROLLS_STORED } from "./constants";
+import { moduleId, recentRolls, MAX_ROLLS_STORED, CONSTANTS, SETTINGS } from "./constants";
 import { ModuleLogger } from "./utils/logger";
 import { initializeWebSocket } from "./network/webSocketEndpoints";
 
@@ -22,7 +22,8 @@ Hooks.once("init", () => {
   console.log(`Initializing ${moduleId}`);
   
   // Register module settings for WebSocket configuration
-  (game as Game).settings.register(moduleId, "wsRelayUrl", {
+  /*
+  game.settings.register(moduleId, "wsRelayUrl", {
     name: "WebSocket Relay URL",
     hint: "URL for the WebSocket relay server",
     scope: "world",
@@ -32,17 +33,17 @@ Hooks.once("init", () => {
     requiresReload: true
   } as any);
   
-  (game as Game).settings.register(moduleId, "apiKey", {
+  game.settings.register(moduleId, "apiKey", {
     name: "API Key",
     hint: "API Key for authentication with the relay server",
     scope: "world",
     config: true,
     type: String,
-    default: (game as Game).world.id,
+    default: game.world.id,
     requiresReload: true
   } as any);;
 
-  (game as Game).settings.register(moduleId, "logLevel", {
+  game.settings.register(moduleId, "logLevel", {
     name: "Log Level",
     hint: "Set the level of detail for module logging",
     scope: "world",
@@ -56,9 +57,13 @@ Hooks.once("init", () => {
     } as any,
     default: 2
   });
+  */
+  for (let [name, data] of Object.entries(SETTINGS.GET_DEFAULT())) {
+    game.settings.register(CONSTANTS.MODULE_ID, name, <any>data);
+  }
 
   // Create and expose module API
-  const module = (game as Game).modules.get(moduleId) as FoundryRestApi;
+  const module = game.modules.get(moduleId) as FoundryRestApi;
   module.api = {
     getWebSocketManager: () => module.socketManager,
     search: async (query: string, filter?: string) => {
@@ -105,7 +110,7 @@ Hooks.on("renderSettingsConfig", (_: SettingsConfig, html: JQuery) => {
     // Add an event listener to save the value when it changes
     apiKeyInput.on("change", (event) => {
       const newValue = (event.target as HTMLInputElement).value;
-      (game as Game).settings.set(moduleId, "apiKey", newValue).then(() => {
+      game.settings.set(moduleId, "apiKey", newValue).then(() => {
         new Dialog({
           title: "Reload Required",
           content: "<p>The API Key has been updated. A reload is required for the changes to take effect. Would you like to reload now?</p>",
@@ -178,7 +183,7 @@ Hooks.on("createChatMessage", (message: any) => {
     }
     
     // Send to relay server if connected
-    const module = (game as Game).modules.get(moduleId) as FoundryRestApi;
+    const module = game.modules.get(moduleId) as FoundryRestApi;
     if (module.socketManager?.isConnected()) {
       module.socketManager.send({
         type: "roll-data",

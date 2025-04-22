@@ -6,9 +6,9 @@ import { parseFilterString, matchesAllFilters } from "../utils/search";
 
 export function initializeWebSocket() {
     // Get settings
-    const wsRelayUrl = (game as Game).settings.get(moduleId, "wsRelayUrl") as string;
-    const apiKey = (game as Game).settings.get(moduleId, "apiKey") as string;
-    const module = (game as Game).modules.get(moduleId) as FoundryRestApi;
+    const wsRelayUrl = game.settings.get(moduleId, "wsRelayUrl") as string;
+    const apiKey = game.settings.get(moduleId, "apiKey") as string;
+    const module = game.modules.get(moduleId) as FoundryRestApi;
     
     if (!wsRelayUrl) {
       ModuleLogger.error(`WebSocket relay URL is empty. Please configure it in module settings.`);
@@ -183,7 +183,7 @@ export function initializeWebSocket() {
             
             try {
             // Get all folders
-            const folders = Object.entries((game as Game).folders?.contents || []).map(([_, folder]) => {
+            const folders = Object.entries(game.folders?.contents || []).map(([_, folder]) => {
                 return {
                 id: folder.id,
                 name: folder.name,
@@ -196,7 +196,7 @@ export function initializeWebSocket() {
             });
             
             // Get all compendiums
-            const compendiums = (game as Game).packs.contents.map(pack => {
+            const compendiums = game.packs.contents.map(pack => {
                 return {
                 id: pack.collection,
                 name: pack.metadata.label,
@@ -235,7 +235,7 @@ export function initializeWebSocket() {
             
             if (data.path.startsWith("Compendium.")) {
                 // Handle compendium path
-                const pack = (game as Game).packs.get(data.path.replace("Compendium.", ""));
+                const pack = game.packs.get(data.path.replace("Compendium.", ""));
                 if (!pack) {
                 throw new Error(`Compendium not found: ${data.path}`);
                 }
@@ -262,7 +262,7 @@ export function initializeWebSocket() {
                 }
                 
                 const folderId = folderMatch[1];
-                const folder = (game as Game).folders?.get(folderId);
+                const folder = game.folders?.get(folderId);
                 
                 if (!folder) {
                 throw new Error(`Folder not found: ${data.path}`);
@@ -491,7 +491,7 @@ export function initializeWebSocket() {
                     };
                     } else if (speakerEntity instanceof Actor) {
                     // It's an actor - try to find a token that represents it on the active scene
-                    const activeScene = (game as Game).scenes?.active;
+                    const activeScene = game.scenes?.active;
                     if (activeScene) {
                         const tokens = activeScene.tokens?.filter(t => t.actor?.id === speakerEntity.id);
                         if (tokens && tokens.length > 0) {
@@ -549,7 +549,7 @@ export function initializeWebSocket() {
                         ModuleLogger.info(`Target token acquired: ${targetDocument.name}`);
                         } else if (targetDocument instanceof Actor) {
                         // It's an actor - try to find a token that represents it on the active scene
-                        const activeScene = (game as Game).scenes?.active;
+                        const activeScene = game.scenes?.active;
                         if (activeScene) {
                             const tokens = activeScene.tokens?.filter(t => t.actor?.id === targetDocument.id);
                             if (tokens && tokens.length > 0) {
@@ -568,15 +568,15 @@ export function initializeWebSocket() {
                         if (canvas && canvas.ready) {
                             // Clear current targets first
                             if (canvas.tokens) {
-                            (game as Game).user?.targets.forEach(t => t.setTarget(false, { user: (game as Game).user, releaseOthers: false, groupSelection: false }));
-                            (game as Game).user?.targets.clear();
+                            game.user?.targets.forEach(t => t.setTarget(false, { user: game.user, releaseOthers: false, groupSelection: false }));
+                            game.user?.targets.clear();
                             
                             // Get the actual token object from the canvas
                             if (targetToken.id) {  // Check that the ID is not null or undefined
                                 const targetObject = canvas.tokens.get(targetToken.id);
                                 if (targetObject) {
                                 // Set as target
-                                targetObject.setTarget(true, { user: (game as Game).user, releaseOthers: true, groupSelection: false });
+                                targetObject.setTarget(true, { user: game.user, releaseOthers: true, groupSelection: false });
                                 ModuleLogger.info(`Token targeted on canvas: ${targetObject.name}`);
                                 }
                             }
@@ -679,7 +679,7 @@ export function initializeWebSocket() {
                 } else {
                     // Fallback: Create a simple chat message with item details
                     const chatData = {
-                    user: (game as Game).user?.id,
+                    user: game.user?.id,
                     speaker: speakerData,
                     content: `
                         <div class="item-card">
@@ -964,11 +964,11 @@ export function initializeWebSocket() {
                     `${baseUrl}/game/styles/foundry.css`,
                     `${baseUrl}/game/ui/sheets.css`,
                     // System-specific styles
-                    `${baseUrl}/systems/${(game as Game).system.id}/system.css`,
-                    `${baseUrl}/systems/${(game as Game).system.id}/styles/system.css`,
+                    `${baseUrl}/systems/${game.system.id}/system.css`,
+                    `${baseUrl}/systems/${game.system.id}/styles/system.css`,
                     // Try with /game path prefix for system styles
-                    `${baseUrl}/game/systems/${(game as Game).system.id}/system.css`,
-                    `${baseUrl}/game/systems/${(game as Game).system.id}/styles/system.css`
+                    `${baseUrl}/game/systems/${game.system.id}/system.css`,
+                    `${baseUrl}/game/systems/${game.system.id}/styles/system.css`
                 ];
                 
                 // Add more debugging to identify the correct paths
@@ -1116,7 +1116,7 @@ export function initializeWebSocket() {
             
             try {
             // Get all macros the current user has access to
-            const macros = (game as Game).macros?.contents.map(macro => {
+            const macros = game.macros?.contents.map(macro => {
                 return {
                 uuid: macro.uuid,
                 id: macro.id,
@@ -1209,13 +1209,13 @@ export function initializeWebSocket() {
             
             try {
             // Get all combats (encounters) in the world
-            const encounters = (game as Game).combats?.contents.map(combat => {
+            const encounters = game.combats?.contents.map(combat => {
                 return {
                 id: combat.id,
                 name: combat.name,
                 round: combat.round,
                 turn: combat.turn,
-                current: combat.id === (game as Game).combat?.id,
+                current: combat.id === game.combat?.id,
                 combatants: combat.combatants.contents.map(c => ({
                     id: c.id,
                     name: c.name,
@@ -1283,7 +1283,7 @@ export function initializeWebSocket() {
                 // Add player combatants if specified
                 if (data.startWithPlayers) {
                 // Get the current viewed scene
-                const currentScene = (game as Game).scenes?.viewed;
+                const currentScene = game.scenes?.viewed;
                 
                 if (currentScene) {
                     // Get all tokens on the scene that have player actors
@@ -1375,7 +1375,7 @@ export function initializeWebSocket() {
             ModuleLogger.info(`Received request for next turn in encounter: ${data.encounterId || 'active'}`);
             
             try {
-            const combat = data.encounterId ? (game as Game).combats?.get(data.encounterId) : (game as Game).combat;
+            const combat = data.encounterId ? game.combats?.get(data.encounterId) : game.combat;
             
             if (!combat) {
                 throw new Error(data.encounterId ? 
@@ -1416,7 +1416,7 @@ export function initializeWebSocket() {
             ModuleLogger.info(`Received request for next round in encounter: ${data.encounterId || 'active'}`);
             
             try {
-            const combat = data.encounterId ? (game as Game).combats?.get(data.encounterId) : (game as Game).combat;
+            const combat = data.encounterId ? game.combats?.get(data.encounterId) : game.combat;
             
             if (!combat) {
                 throw new Error(data.encounterId ? 
@@ -1457,7 +1457,7 @@ export function initializeWebSocket() {
             ModuleLogger.info(`Received request for previous turn in encounter: ${data.encounterId || 'active'}`);
             
             try {
-            const combat = data.encounterId ? (game as Game).combats?.get(data.encounterId) : (game as Game).combat;
+            const combat = data.encounterId ? game.combats?.get(data.encounterId) : game.combat;
             
             if (!combat) {
                 throw new Error(data.encounterId ? 
@@ -1498,7 +1498,7 @@ export function initializeWebSocket() {
             ModuleLogger.info(`Received request for previous round in encounter: ${data.encounterId || 'active'}`);
             
             try {
-            const combat = data.encounterId ? (game as Game).combats?.get(data.encounterId) : (game as Game).combat;
+            const combat = data.encounterId ? game.combats?.get(data.encounterId) : game.combat;
             
             if (!combat) {
                 throw new Error(data.encounterId ? 
@@ -1541,10 +1541,10 @@ export function initializeWebSocket() {
             try {
             let encounterId = data.encounterId;
             if (!encounterId) {
-                encounterId = (game as Game).combat?.id;
+                encounterId = game.combat?.id;
             }
             
-            const combat = (game as Game).combats?.get(encounterId);
+            const combat = game.combats?.get(encounterId);
             
             if (!combat) {
                 throw new Error(`No encounter not found`);
@@ -1577,8 +1577,8 @@ export function initializeWebSocket() {
             try {
             // Get the combat
             const combat = data.encounterId ? 
-                (game as Game).combats?.get(data.encounterId) : 
-                (game as Game).combat;
+                game.combats?.get(data.encounterId) : 
+                game.combat;
             
             if (!combat) {
                 throw new Error(data.encounterId ? 
@@ -1614,7 +1614,7 @@ export function initializeWebSocket() {
                     } else if (entity.documentName === "Actor") {
                     // For actors, we need a token representation
                     // Here we check if actor has a token on the current scene
-                    const scene = (game as Game).scenes?.viewed;
+                    const scene = game.scenes?.viewed;
                     if (scene) {
                         const tokenForActor = scene.tokens?.find(t => t.actor?.id === entity.id);
                         if (tokenForActor) {
@@ -1690,8 +1690,8 @@ export function initializeWebSocket() {
             try {
             // Get the combat
             const combat = data.encounterId ? 
-                (game as Game).combats?.get(data.encounterId) : 
-                (game as Game).combat;
+                game.combats?.get(data.encounterId) : 
+                game.combat;
             
             if (!combat) {
                 throw new Error(data.encounterId ? 
@@ -1832,7 +1832,7 @@ export function initializeWebSocket() {
                 }
 
                 // 1. Mark as defeated in combat if in encounter
-                const combat = (game as Game).combat;
+                const combat = game.combat;
                 if (combat) {
                     const combatant = combat.combatants.find(c => 
                     c.token?.id === token.id && c.token?.parent?.id === token.parent?.id
@@ -1886,7 +1886,7 @@ export function initializeWebSocket() {
                 let tokensUpdated = 0;
 
                 // 1. Find all tokens for this actor across visible scenes and update them
-                const scenes = (game as Game).scenes;
+                const scenes = game.scenes;
                 if (scenes?.viewed) {
                     const tokens = scenes.viewed.tokens.filter(t => t.actor?.id === actor.id);
                     
@@ -1907,7 +1907,7 @@ export function initializeWebSocket() {
                 }
 
                 // 2. Mark all instances in combat as defeated
-                const combat = (game as Game).combat;
+                const combat = game.combat;
                 if (combat) {
                     const combatants = combat.combatants.filter(c => c.actor?.id === actor.id);
                     
@@ -2258,7 +2258,7 @@ export function initializeWebSocket() {
         ModuleLogger.info(`Received select entities request:`, data);
         
         try {
-            const scene = (game as Game).scenes?.active;
+            const scene = game.scenes?.active;
             if (!scene) {
                 throw new Error("No active scene found");
             }
@@ -2336,7 +2336,7 @@ export function initializeWebSocket() {
         ModuleLogger.info(`Received get selected entities request:`, data);
         
         try {
-            const scene = (game as Game).scenes?.active;
+            const scene = game.scenes?.active;
             if (!scene) {
                 throw new Error("No active scene found");
             }
