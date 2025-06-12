@@ -7,15 +7,19 @@
   "private": true,
   "scripts": {
     "build": "tsc && vite build",
-    "dev": "tsc && vite build --watch"
+    "dev": "tsc && vite build --watch",
+    "test": "jest"
   },
   "devDependencies": {
     "@league-of-foundry-developers/foundry-vtt-types": "^9.280.0",
     "@types/file-saver": "^2.0.7",
+    "@types/jest": "^29.5.14",
     "@types/node": "^22.13.9",
+    "jest": "^30.0.0",
     "rollup-plugin-copy": "^3.5.0",
     "rollup-plugin-scss": "^3.0.0",
     "sass": "^1.54.8",
+    "ts-jest": "^29.4.0",
     "typescript": "^5.5.4",
     "vite": "^5.4.2"
   },

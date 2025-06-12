@@ -2,6 +2,7 @@
   "compilerOptions": {
     "types": [
       "@league-of-foundry-developers/foundry-vtt-types",
+      "jest"
     ],
     "target": "ESNext",
     "useDefineForClassFields": true,
@@ -25,6 +26,6 @@
     "skipLibCheck": true
   },
   "include": [
-    "src"
+    "src",
   ]
 }

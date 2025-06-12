@@ -1,8 +1,9 @@
 import { WSCloseCodes } from "../types";
 import { ModuleLogger } from "../utils/logger";
 import { moduleId } from "../constants"; // Corrected import path
+import { HandlerContext } from "./routers/baseRouter"
 
-type MessageHandler = (data: any) => void;
+type MessageHandler = (data: any, context: HandlerContext) => void;
 
 export class WebSocketManager {
   private url: string;
@@ -279,7 +280,7 @@ export class WebSocketManager {
       
       if (data.type && this.messageHandlers.has(data.type)) {
         ModuleLogger.info(`Handling message of type: ${data.type}`);
-        this.messageHandlers.get(data.type)!(data);
+          this.messageHandlers.get(data.type)!(data, {socketManager: this} as HandlerContext);
       } else if (data.type) {
         ModuleLogger.warn(`No handler for message type: ${data.type}`);
       }
