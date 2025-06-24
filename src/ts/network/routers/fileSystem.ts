@@ -119,47 +119,76 @@ router.addRoute({
       let file;
 
       if (binaryData) {
+        if (!Array.isArray(binaryData) || binaryData.length === 0) {
+          throw new Error("Invalid binary data: must be non-empty array");
+        }
         const bytes = new Uint8Array(binaryData);
         const blob = new Blob([bytes], { type: mimeType || 'application/octet-stream' });
         file = new File([blob], filename, { type: mimeType || 'application/octet-stream' });
+        ModuleLogger.info(`Created file from binary data: ${bytes.length} bytes`);
       } else if (fileData) {
+        if (!fileData.includes(',') || !fileData.startsWith('data:')) {
+          throw new Error("Invalid file data format: must be data URL with base64 content");
+        }
+        
         const base64Data = fileData.split(',')[1];
-        const binaryData = atob(base64Data);
-        const bytes = new Uint8Array(binaryData.length);
-        for (let i = 0; i < binaryData.length; i++) {
-          bytes[i] = binaryData.charCodeAt(i);
+        if (!base64Data) {
+          throw new Error("No base64 data found in file data");
+        }
+        
+        let binaryString;
+        try {
+          binaryString = atob(base64Data);
+        } catch (error) {
+          throw new Error(`Invalid base64 data: ${(error as Error).message}`);
+        }
+        
+        if (binaryString.length === 0) {
+          throw new Error("Decoded file data is empty");
+        }
+        
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
         }
         const blob = new Blob([bytes], { type: mimeType || 'application/octet-stream' });
         file = new File([blob], filename, { type: mimeType || 'application/octet-stream' });
+        ModuleLogger.info(`Created file from base64 data: ${bytes.length} bytes`);
       } else {
         throw new Error("Missing file data (either binaryData or fileData is required)");
       }
 
       const uploadSource = source || "data";
 
-      try {
-        const directories = path.split('/');
-        let currentPath = '';
+      // Create directories if they don't exist
+      if (path && path !== '/' && path !== '') {
+        try {
+          const directories = path.split('/').filter((dir: string) => dir.length > 0);
+          let currentPath = '';
 
-        for (const directory of directories) {
-          currentPath = currentPath ? `${currentPath}/${directory}` : directory;
-          try {
-            await FilePicker.createDirectory(uploadSource, currentPath);
-          } catch (createDirError) {
-            if (!(createDirError as any).message.includes("already exists")) {
-              ModuleLogger.error(`Error creating directory:`, createDirError);
-              throw new Error(`Could not create directory: ${(createDirError as Error).message}`);
+          for (const directory of directories) {
+            currentPath = currentPath ? `${currentPath}/${directory}` : directory;
+            try {
+              await FilePicker.createDirectory(uploadSource, currentPath);
+              ModuleLogger.info(`Created/verified directory: ${currentPath}`);
+            } catch (createDirError) {
+              const errorMessage = (createDirError as any).message || String(createDirError);
+              if (!errorMessage.includes("already exists")) {
+                ModuleLogger.error(`Error creating directory ${currentPath}:`, createDirError);
+                throw new Error(`Could not create directory '${currentPath}': ${errorMessage}`);
+              }
             }
           }
+        } catch (createDirError) {
+          ModuleLogger.error(`Error creating directories for path '${path}':`, createDirError);
+          throw new Error(`Could not create directory structure: ${(createDirError as Error).message}`);
         }
-      } catch (createDirError) {
-        ModuleLogger.error(`Error creating directory:`, createDirError);
-        throw new Error(`Could not create directory: ${(createDirError as Error).message}`);
       }
 
+      // Check if file already exists
       let existingFile = null;
       try {
-        const filePath = path + '/' + filename;
+        const filePath = path && path !== '/' ? `${path}/${filename}` : filename;
         existingFile = await FilePicker.browse(uploadSource, filePath);
       } catch (e) {
         // File does not exist, which is fine
@@ -169,13 +198,23 @@ router.addRoute({
         throw new Error("File already exists. Set overwrite to true to replace it.");
       }
 
+      // Upload the file
       const result = await FilePicker.upload(uploadSource, path, file);
-
+      
+      // Validate the upload result
+      if (!result) {
+        throw new Error("FilePicker.upload returned null/undefined result");
+      }
+      
+      const uploadedPath = result && typeof result === 'object' && 'path' in result ? result.path : `${path}/${filename}`;
+      
+      ModuleLogger.info(`File uploaded successfully: ${uploadedPath}`);
+      
       socketManager?.send({
         type: "upload-file-result",
         requestId: data.requestId,
         success: true,
-        path: result && typeof result === 'object' && 'path' in result ? result.path : path + '/' + filename
+        path: uploadedPath
       });
     } catch (error) {
       ModuleLogger.error(`Error uploading file:`, error);
