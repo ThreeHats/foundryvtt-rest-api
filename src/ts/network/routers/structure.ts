@@ -16,7 +16,8 @@ router.addRoute({
           id: folder.id,
           name: folder.name,
           type: folder.type,
-          parent: folder.parent?.id,
+          parent: (folder as any)._source?.folder ?? "root",
+          depth: folder.depth,
           path: folder.uuid,
           sorting: (folder as any).sort,
           sortingMode: (folder as any).sortingMode
