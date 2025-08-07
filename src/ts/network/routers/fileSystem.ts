@@ -4,7 +4,7 @@ import { ModuleLogger } from "../../utils/logger";
 export const router = new Router("fileSystemRouter");
 
 router.addRoute({
-  actionType: "get-file-system",
+  actionType: "file-system",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received get file system request:`, data);

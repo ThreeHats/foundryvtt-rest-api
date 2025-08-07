@@ -5,7 +5,7 @@ import { parseFilterString, matchesAllFilters } from "../../utils/search";
 export const router = new Router("searchRouter");
 
 router.addRoute({
-  actionType: "perform-search",
+  actionType: "search",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received search request:`, data);
@@ -14,7 +14,7 @@ router.addRoute({
       if (!window.QuickInsert) {
         ModuleLogger.error(`QuickInsert not available`);
         socketManager?.send({
-          type: "search-results",
+          type: "search-result",
           requestId: data.requestId,
           query: data.query,
           error: "QuickInsert not available",
@@ -31,7 +31,7 @@ router.addRoute({
         } catch (error) {
           ModuleLogger.error(`Failed to force QuickInsert index:`, error);
           socketManager?.send({
-            type: "search-results",
+            type: "search-result",
             requestId: data.requestId,
             query: data.query,
             error: "QuickInsert index not ready",
@@ -55,7 +55,7 @@ router.addRoute({
       ModuleLogger.info(`Search returned ${filteredResults.length} results`);
 
       socketManager?.send({
-        type: "search-results",
+        type: "search-result",
         requestId: data.requestId,
         query: data.query,
         filter: data.filter,
@@ -82,7 +82,7 @@ router.addRoute({
     } catch (error) {
       ModuleLogger.error(`Error performing search:`, error);
       socketManager?.send({
-        type: "search-results",
+        type: "search-result",
         requestId: data.requestId,
         query: data.query,
         error: (error as Error).message,

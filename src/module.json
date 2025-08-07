@@ -13,8 +13,8 @@
   "url": "https://github.com/ThreeHats/foundryvtt-rest-api",
   "bugs": "https://github.com/ThreeHats/foundryvtt-rest-api/issues",
   "compatibility": {
-    "minimum": "12",
-    "verified": "12"
+    "minimum": "13",
+    "verified": "13"
   },
   "languages": [
     {

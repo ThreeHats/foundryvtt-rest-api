@@ -1,6 +1,6 @@
 import { WSCloseCodes } from "../types";
 import { ModuleLogger } from "../utils/logger";
-import { moduleId } from "../constants"; // Corrected import path
+import { moduleId, SETTINGS } from "../constants"; // Corrected import path
 import { HandlerContext } from "./routers/baseRouter"
 
 type MessageHandler = (data: any, context: HandlerContext) => void;
@@ -23,7 +23,7 @@ export class WebSocketManager {
   constructor(url: string, token: string) {
     this.url = url;
     this.token = token;
-    this.clientId = `foundry-${(game as Game).user?.id || Math.random().toString(36).substring(2, 15)}`;
+    this.clientId = `foundry-${game.user?.id || Math.random().toString(36).substring(2, 15)}`;
     
     // Determine if this is the primary GM (lowest user ID among full GMs with role 4)
     this.isPrimaryGM = this.checkIfPrimaryGM();
@@ -31,7 +31,7 @@ export class WebSocketManager {
     ModuleLogger.info(`Created WebSocketManager with clientId: ${this.clientId}, isPrimaryGM: ${this.isPrimaryGM}`);
     
     // Listen for user join/leave events to potentially take over as primary
-    if ((game as Game).user?.isGM && (game as Game).user?.role === 4) {
+    if (game.user?.isGM && game.user?.role === 4) {
       // When another user connects or disconnects, check if we need to become primary
       Hooks.on("userConnected", this.reevaluatePrimaryGM.bind(this));
       Hooks.on("userDisconnected", this.reevaluatePrimaryGM.bind(this));
@@ -46,7 +46,7 @@ export class WebSocketManager {
    */
   public static getInstance(url: string, token: string): WebSocketManager | null {
     // Only create an instance if the user is a full GM (role 4), not Assistant GM
-    if (!(game as Game).user?.isGM || (game as Game).user?.role !== 4) {
+    if (!game.user?.isGM || game.user?.role !== 4) {
       ModuleLogger.info(`WebSocketManager not created - user is not a full GM`);
       return null;
     }
@@ -65,11 +65,11 @@ export class WebSocketManager {
    */
   private checkIfPrimaryGM(): boolean {
     // Make sure current user is a full GM (role 4), not an Assistant GM
-    if (!(game as Game).user?.isGM || (game as Game).user?.role !== 4) return false;
+    if (!game.user?.isGM || game.user?.role !== 4) return false;
     
-    const currentUserId = (game as Game).user?.id;
+    const currentUserId = game.user?.id;
     // Only consider active users with role 4 (full GM), not Assistant GMs (role 3)
-    const activeGMs = (game as Game).users?.filter(u => u.role === 4 && u.active) || [];
+    const activeGMs = game.users?.filter(u => u.role === 4 && u.active) || [];
     
     if (activeGMs.length === 0) return false;
     
@@ -111,7 +111,7 @@ export class WebSocketManager {
 
   connect(): void {
     // Double-check that user is still a full GM (role 4) and is the primary GM before connecting
-    if (!(game as Game).user?.isGM || (game as Game).user?.role !== 4) {
+    if (!game.user?.isGM || game.user?.role !== 4) {
       ModuleLogger.info(`WebSocket connection aborted - user is not a full GM`);
       return;
     }
@@ -235,7 +235,7 @@ export class WebSocketManager {
     this.send({ type: "ping" });
     
     // Start ping interval using the setting value
-    const pingIntervalSeconds = (game as Game).settings.get(moduleId, "pingInterval") as number;
+    const pingIntervalSeconds = game.settings.get(moduleId, SETTINGS.PING_INTERVAL) as number;
     const pingIntervalMs = pingIntervalSeconds * 1000;
     ModuleLogger.info(`Starting application ping interval: ${pingIntervalSeconds} seconds`);
     
@@ -295,8 +295,8 @@ export class WebSocketManager {
     }
     
     // Read settings for reconnection parameters
-    const maxAttempts = (game as Game).settings.get(moduleId, "reconnectMaxAttempts") as number;
-    const baseDelay = (game as Game).settings.get(moduleId, "reconnectBaseDelay") as number;
+    const maxAttempts = game.settings.get(moduleId, SETTINGS.RECONNECT_MAX_ATTEMPTS) as number;
+    const baseDelay = game.settings.get(moduleId, SETTINGS.RECONNECT_BASE_DELAY) as number;
     
     this.reconnectAttempts++;
     

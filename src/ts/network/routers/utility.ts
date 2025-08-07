@@ -45,13 +45,13 @@ router.addRoute({
 });
 
 router.addRoute({
-  actionType: "select-entities",
+  actionType: "select",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received select entities request:`, data);
 
     try {
-      const scene = (game as Game).scenes?.active;
+      const scene = game.scenes?.active;
       if (!scene) {
         throw new Error("No active scene found");
       }
@@ -101,17 +101,20 @@ router.addRoute({
         }
       }
 
+      const selectedUuids = targets.map(token => token.uuid);
+
       socketManager?.send({
-        type: "select-entities-result",
+        type: "select-result",
         requestId: data.requestId,
         success: true,
         count: targets.length,
-        message: `${targets.length} entities selected`
+        message: `${targets.length} entities selected`,
+        selected: selectedUuids
       });
     } catch (error) {
       ModuleLogger.error(`Error selecting entities:`, error);
       socketManager?.send({
-        type: "select-entities-result",
+        type: "select-result",
         requestId: data.requestId,
         success: false,
         error: (error as Error).message
@@ -121,13 +124,13 @@ router.addRoute({
 });
 
 router.addRoute({
-  actionType: "get-selected-entities",
+  actionType: "selected",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received get selected entities request:`, data);
 
     try {
-      const scene = (game as Game).scenes?.active;
+      const scene = game.scenes?.active;
       if (!scene) {
         throw new Error("No active scene found");
       }
@@ -139,7 +142,7 @@ router.addRoute({
       }));
 
       socketManager?.send({
-        type: "selected-entities-result",
+        type: "selected-result",
         requestId: data.requestId,
         success: true,
         selected: selectedUuids
@@ -147,7 +150,7 @@ router.addRoute({
     } catch (error) {
       ModuleLogger.error(`Error getting selected entities:`, error);
       socketManager?.send({
-        type: "selected-entities-result",
+        type: "selected-result",
         requestId: data.requestId,
         success: false,
         error: (error as Error).message

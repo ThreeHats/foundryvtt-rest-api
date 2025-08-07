@@ -1,7 +1,7 @@
 // src/ts/module.ts
 import "../styles/style.scss";
 import { FoundryRestApi } from "./types";
-import { moduleId, recentRolls, MAX_ROLLS_STORED } from "./constants";
+import { moduleId, recentRolls, MAX_ROLLS_STORED, CONSTANTS, SETTINGS } from "./constants";
 import { ModuleLogger } from "./utils/logger";
 import { initializeWebSocket } from "./network/webSocketEndpoints";
 
@@ -21,80 +21,12 @@ declare global {
 Hooks.once("init", () => {
   console.log(`Initializing ${moduleId}`);
   
-  // Register module settings for WebSocket configuration
-  (game as Game).settings.register(moduleId, "wsRelayUrl", {
-    name: "WebSocket Relay URL",
-    hint: "URL for the WebSocket relay server",
-    scope: "world",
-    config: true,
-    type: String,
-    default: "wss://foundryvtt-rest-api-relay.fly.dev",
-    requiresReload: true
-  } as any);
-  
-  (game as Game).settings.register(moduleId, "apiKey", {
-    name: "API Key",
-    hint: "API Key for authentication with the relay server",
-    scope: "world",
-    config: true,
-    type: String,
-    default: (game as Game).world.id,
-    requiresReload: true
-  } as any);;
-
-  (game as Game).settings.register(moduleId, "logLevel", {
-    name: "Log Level",
-    hint: "Set the level of detail for module logging",
-    scope: "world",
-    config: true,
-    type: Number,
-    choices: {
-      0: "debug",
-      1: "info",
-      2: "warn",
-      3: "error"
-    } as any,
-    default: 2
-  });
-
-  // Add new settings for connection management
-  (game as Game).settings.register(moduleId, "pingInterval", {
-    name: "Ping Interval (seconds)",
-    hint: "How often (in seconds) the module sends a ping to the relay server to keep the connection alive.",
-    scope: "world",
-    config: true,
-    type: Number,
-    default: 30,
-    range: {
-      min: 5,
-      max: 600,
-      step: 1
-    },
-    requiresReload: true
-  } as any);
-
-  (game as Game).settings.register(moduleId, "reconnectMaxAttempts", {
-    name: "Max Reconnect Attempts",
-    hint: "Maximum number of times the module will try to reconnect after losing connection.",
-    scope: "world",
-    config: true,
-    type: Number,
-    default: 20,
-    requiresReload: true
-  } as any);
-
-  (game as Game).settings.register(moduleId, "reconnectBaseDelay", {
-    name: "Reconnect Base Delay (ms)",
-    hint: "Initial delay (in milliseconds) before the first reconnect attempt. Subsequent attempts use exponential backoff.",
-    scope: "world",
-    config: true,
-    type: Number,
-    default: 1000,
-    requiresReload: true
-  } as any);
+  for (let [name, data] of Object.entries(SETTINGS.GET_DEFAULT())) {
+    game.settings.register(CONSTANTS.MODULE_ID, name, <any>data);
+  }
 
   // Create and expose module API
-  const module = (game as Game).modules.get(moduleId) as FoundryRestApi;
+  const module = game.modules.get(moduleId) as FoundryRestApi;
   module.api = {
     getWebSocketManager: () => {
       if (!module.socketManager) {
@@ -147,7 +79,7 @@ Hooks.on("renderSettingsConfig", (_: SettingsConfig, html: JQuery) => {
     // Add an event listener to save the value when it changes
     apiKeyInput.on("change", (event) => {
       const newValue = (event.target as HTMLInputElement).value;
-      (game as Game).settings.set(moduleId, "apiKey", newValue).then(() => {
+      game.settings.set(moduleId, "apiKey", newValue).then(() => {
         new Dialog({
           title: "Reload Required",
           content: "<p>The API Key has been updated. A reload is required for the changes to take effect. Would you like to reload now?</p>",
@@ -220,7 +152,7 @@ Hooks.on("createChatMessage", (message: any) => {
     }
     
     // Send to relay server if connected
-    const module = (game as Game).modules.get(moduleId) as FoundryRestApi;
+    const module = game.modules.get(moduleId) as FoundryRestApi;
     if (module.socketManager?.isConnected()) {
       module.socketManager.send({
         type: "roll-data",

@@ -5,7 +5,7 @@ import { deepSerializeEntity } from "../../utils/serialization";
 export const router = new Router("entityRouter");
 
 router.addRoute({
-  actionType: "get-entity",
+  actionType: "entity",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received entity request:`, data);
@@ -39,7 +39,7 @@ router.addRoute({
       if (!entityData) {
         ModuleLogger.error(`Entity not found: ${data.uuid}`);
         socketManager?.send({
-          type: "entity-data",
+          type: "entity-result",
           requestId: data.requestId,
           uuid: data.uuid,
           error: "Entity not found",
@@ -51,7 +51,7 @@ router.addRoute({
       ModuleLogger.info(`Sending entity data for: ${data.uuid}`, entityData);
 
       socketManager?.send({
-        type: "entity-data",
+        type: "entity-result",
         requestId: data.requestId,
         uuid: entityUUID,
         data: entityData,
@@ -59,7 +59,7 @@ router.addRoute({
     } catch (error) {
       ModuleLogger.error(`Error getting entity:`, error);
       socketManager?.send({
-        type: "entity-data",
+        type: "entity-result",
         requestId: data.requestId,
         uuid: data.uuid,
         error: (error as Error).message,
@@ -71,7 +71,7 @@ router.addRoute({
 
 // Handle entity creation
 router.addRoute({
-  actionType: "create-entity",
+  actionType: "create",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received create entity request for type: ${data.entityType}`);
@@ -94,7 +94,7 @@ router.addRoute({
       }
 
       socketManager?.send({
-        type: "entity-created",
+        type: "create-result",
         requestId: data.requestId,
         uuid: entity.uuid,
         entity: entity.toObject()
@@ -102,7 +102,7 @@ router.addRoute({
     } catch (error) {
       ModuleLogger.error(`Error creating entity:`, error);
       socketManager?.send({
-        type: "entity-created",
+        type: "create-result",
         requestId: data.requestId,
         error: (error as Error).message,
         message: "Failed to create entity"
@@ -113,7 +113,7 @@ router.addRoute({
 
 // Handle decrease attribute request
 router.addRoute({
-  actionType: "decrease-attribute",
+  actionType: "decrease",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received decrease attribute request for attribute: ${data.attribute}, amount: ${data.amount}`);
@@ -166,7 +166,7 @@ router.addRoute({
       }
 
       socketManager?.send({
-        type: "modify-attribute-result",
+        type: "decrease-result",
         requestId: data.requestId,
         results,
         success: true
@@ -174,7 +174,7 @@ router.addRoute({
     } catch (error) {
       ModuleLogger.error(`Error decreasing attribute:`, error);
       socketManager?.send({
-        type: "modify-attribute-result",
+        type: "decrease-result",
         requestId: data.requestId,
         success: false,
         error: (error as Error).message
@@ -185,7 +185,7 @@ router.addRoute({
 
 // Handle increase attribute request
 router.addRoute({
-  actionType: "increase-attribute",
+  actionType: "increase",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received increase attribute request for attribute: ${data.attribute}, amount: ${data.amount}`);
@@ -238,7 +238,7 @@ router.addRoute({
       }
 
       socketManager?.send({
-        type: "modify-attribute-result",
+        type: "increase-result",
         requestId: data.requestId,
         results,
         success: true
@@ -246,7 +246,7 @@ router.addRoute({
     } catch (error) {
       ModuleLogger.error(`Error increasing attribute:`, error);
       socketManager?.send({
-        type: "modify-attribute-result",
+        type: "increase-result",
         requestId: data.requestId,
         success: false,
         error: (error as Error).message
@@ -257,7 +257,7 @@ router.addRoute({
 
 // Handle entity update
 router.addRoute({
-  actionType: "update-entity",
+  actionType: "update",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received update entity request for UUID: ${data.uuid}`);
@@ -284,7 +284,7 @@ router.addRoute({
       }
 
       for (let entity of entities) {
-        await entity?.update(data.updateData);
+        await entity?.update(data.data);
       }
 
       let updatedEntities = [];
@@ -293,7 +293,7 @@ router.addRoute({
       }
 
       socketManager?.send({
-        type: "entity-updated",
+        type: "update-result",
         requestId: data.requestId,
         uuid: data.uuid,
         entity: updatedEntities.map(e => e?.toObject())
@@ -301,7 +301,7 @@ router.addRoute({
     } catch (error) {
       ModuleLogger.error(`Error updating entity:`, error);
       socketManager?.send({
-        type: "entity-updated",
+        type: "update-result",
         requestId: data.requestId,
         uuid: data.uuid,
         error: (error as Error).message,
@@ -313,7 +313,7 @@ router.addRoute({
 
 // Handle entity deletion
 router.addRoute({
-  actionType: "delete-entity",
+  actionType: "delete",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received delete entity request for UUID: ${data.uuid}`);
@@ -344,7 +344,7 @@ router.addRoute({
       }
 
       socketManager?.send({
-        type: "entity-deleted",
+        type: "delete-result",
         requestId: data.requestId,
         uuid: data.uuid,
         success: true
@@ -352,7 +352,7 @@ router.addRoute({
     } catch (error) {
       ModuleLogger.error(`Error deleting entity:`, error);
       socketManager?.send({
-        type: "entity-deleted",
+        type: "delete-result",
         requestId: data.requestId,
         uuid: data.uuid,
         error: (error as Error).message,
@@ -364,7 +364,7 @@ router.addRoute({
 
 // Handle kill request (mark token/actor as defeated)
 router.addRoute({
-  actionType: "kill-entity",
+  actionType: "kill",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received kill request for UUID: ${data.uuid}`);
@@ -406,7 +406,7 @@ router.addRoute({
             throw new Error("Token has no associated actor");
           }
 
-          const combat = (game as Game).combat;
+          const combat = game.combat;
           if (combat) {
             const combatant = combat.combatants.find(c => 
               c.token?.id === token.id && c.token?.parent?.id === token.parent?.id
@@ -457,7 +457,7 @@ router.addRoute({
           const actor = entity;
           let tokensUpdated = 0;
 
-          const scenes = (game as Game).scenes;
+          const scenes = game.scenes;
           if (scenes?.viewed) {
             const tokens = scenes.viewed.tokens.filter(t => t.actor?.id === actor.id);
             
@@ -477,7 +477,7 @@ router.addRoute({
             }
           }
 
-          const combat = (game as Game).combat;
+          const combat = game.combat;
           if (combat) {
             const combatants = combat.combatants.filter(c => c.actor?.id === actor.id);
             
@@ -519,14 +519,14 @@ router.addRoute({
       }
 
       socketManager?.send({
-        type: "kill-entity-result",
+        type: "kill-result",
         requestId: data.requestId,
         results
       });
     } catch (error) {
       ModuleLogger.error(`Error marking entities as defeated:`, error);
       socketManager?.send({
-        type: "kill-entity-result",
+        type: "kill-result",
         requestId: data.requestId,
         success: false,
         error: (error as Error).message
@@ -537,7 +537,7 @@ router.addRoute({
 
 // Handle give item request
 router.addRoute({
-  actionType: "give-item",
+  actionType: "give",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received give item request from ${data.fromUuid} to ${data.toUuid}`);
@@ -546,12 +546,13 @@ router.addRoute({
       if (!data.toUuid && !data.selected) {
         throw new Error("Target UUID or selected is required");
       }
-      if (!data.itemUuid) throw new Error("Item UUID is required");
+      if (!data.itemUuid && !data.itemName) {
+        throw new Error("Item UUID or Item Name is required");
+      }
 
       let fromEntity: any | null = null;
       if (data.fromUuid) {
         fromEntity = await fromUuid(data.fromUuid);
-        
         if (fromEntity?.documentName !== "Actor") {
           throw new Error(`Source entity must be an Actor, got ${fromEntity?.documentName}`);
         }
@@ -562,60 +563,114 @@ router.addRoute({
       }
       const toEntity = await fromUuid(data.toUuid);
       if (!toEntity) throw new Error(`Target entity not found: ${data.toUuid}`);
-
       if (toEntity.documentName !== "Actor") {
         throw new Error(`Target entity must be an Actor, got ${toEntity.documentName}`);
       }
 
-      const itemEntity = await fromUuid(data.itemUuid);
-      if (!itemEntity) throw new Error(`Item not found: ${data.itemUuid}`);
+      let itemEntity: any | null = null;
+      let itemData: any | null = null;
 
-      if (itemEntity.documentName !== "Item") {
-        throw new Error(`Entity must be an Item, got ${itemEntity.documentName}`);
-      }
+      if (data.itemUuid) {
+        itemEntity = await fromUuid(data.itemUuid);
+        if (itemEntity) {
+          itemData = itemEntity.toObject();
+        }
+      } else if (data.itemName) {
+        if (fromEntity) {
+          itemEntity = fromEntity.items.find((i: any) => i.name.toLowerCase() === data.itemName.toLowerCase());
+          if (itemEntity) {
+            itemData = itemEntity.toObject();
+          }
+        } else {
+          // Global search if no fromUuid
+          if (!window.QuickInsert) {
+            throw new Error("QuickInsert is not available for global item search.");
+          }
 
-      if (data.fromUuid && itemEntity.parent?.id !== fromEntity.id) {
-        throw new Error(`Item ${data.itemUuid} does not belong to source actor ${data.fromUuid}`);
-      }
+          if (!window.QuickInsert.hasIndex) {
+            ModuleLogger.info(`QuickInsert index not ready, forcing index creation`);
+            window.QuickInsert.forceIndex();
+            await new Promise(resolve => setTimeout(resolve, 500)); // Give index time to build
+          }
+          
+          const searchResults = await window.QuickInsert.search(data.itemName, null, 20); // Search all documents
+          const itemSearchResult = searchResults.find(r => r.item?.documentType === "Item");
 
-      const itemData = itemEntity.toObject();
-      delete itemData._id;
-
-      if (data.quantity && typeof data.quantity === 'number') {
-        if (itemData.system && itemData.system.quantity) {
-          const originalQuantity = itemData.system.quantity;
-          itemData.system.quantity = data.quantity;
-          if (data.fromUuid) {
-            if (data.quantity >= originalQuantity) {
-              await itemEntity.delete();
-            } else {
-              await itemEntity.update({"system.quantity": originalQuantity - data.quantity});
+          if (itemSearchResult) {
+            const foundItem = await itemSearchResult.item.get(); // Asynchronously get the full document
+            if (foundItem) {
+              itemData = foundItem.toObject(); // Get the plain data object
             }
           }
         }
-      } else {
-        if (data.fromUuid) {
-          await itemEntity.delete();
+      }
+
+      if (!itemData) throw new Error(`Item not found: ${data.itemUuid || data.itemName}`);
+
+      // This check is only valid if we found an item via UUID or on an actor.
+      if (itemEntity && itemEntity.documentName !== "Item") {
+        throw new Error(`Entity must be an Item, got ${itemEntity.documentName}`);
+      }
+
+      // This check is only valid if we found the item on a specific actor.
+      if (itemEntity && fromEntity && itemEntity.parent?.id !== fromEntity.id) {
+        throw new Error(`Item ${data.itemUuid || data.itemName} does not belong to source actor ${data.fromUuid}`);
+      }
+
+      const amountToGive = data.quantity || 1;
+
+      // Check if a stackable item with the same name already exists on the target actor
+      const existingItem = (toEntity as any).items.find((i: any) => i.name === itemData.name);
+      const isStackable = existingItem && hasProperty(existingItem.system, 'quantity');
+      
+      // If a source actor is defined, handle removing/updating the item from them first.
+      if (itemEntity && fromEntity) {
+        const sourceQuantity = getProperty(itemEntity, 'system.quantity');
+        if (typeof sourceQuantity === 'number' && amountToGive < sourceQuantity) {
+            await itemEntity.update({ "system.quantity": sourceQuantity - amountToGive });
+        } else {
+            // If giving the whole stack, or it's not a stackable item, delete it.
+            await itemEntity.delete();
         }
       }
 
-      const newItem = await toEntity.createEmbeddedDocuments("Item", [itemData]);
+      let newItemId;
+      let finalQuantity;
+      // Now, add the item to the target actor.
+      if (isStackable) {
+        const newQuantity = existingItem.system.quantity + amountToGive;
+        await existingItem.update({ 'system.quantity': newQuantity });
+        newItemId = existingItem.id;
+        finalQuantity = newQuantity;
+      } else {
+        // If the item doesn't exist on the target or isn't stackable, create a new one.
+        delete itemData._id;
+        if (hasProperty(itemData, 'system.quantity')) {
+            itemData.system.quantity = amountToGive;
+        } else if (itemData.system) { // Handle items that might not have quantity by default
+            itemData.system.quantity = amountToGive;
+        }
+        finalQuantity = amountToGive;
+
+        const newItems = await (toEntity as any).createEmbeddedDocuments("Item", [itemData]);
+        newItemId = newItems[0].id;
+      }
 
       socketManager?.send({
-        type: "give-item-result",
+        type: "give-result",
         requestId: data.requestId,
         fromUuid: data.fromUuid,
         selected: data.selected,
         toUuid: data.toUuid,
-        quantity: data.quantity,
+        quantity: finalQuantity,
         itemUuid: data.itemUuid,
-        newItemId: newItem[0].id,
+        newItemId: newItemId,
         success: true
       });
     } catch (error) {
       ModuleLogger.error(`Error giving item:`, error);
       socketManager?.send({
-        type: "give-item-result",
+        type: "give-result",
         requestId: data.requestId,
         selected: data.selected,
         fromUuid: data.fromUuid || "",
@@ -627,4 +682,68 @@ router.addRoute({
       });
     }
   }
+});
+
+// Handle remove item request
+router.addRoute({
+    actionType: "remove",
+    handler: async (data, context) => {
+        const socketManager = context?.socketManager;
+        ModuleLogger.info(`Received remove item request from actor: ${data.actorUuid}`);
+
+        try {
+            if (!data.actorUuid && !data.selected) {
+                throw new Error("Target actor UUID or selected is required");
+            }
+            if (!data.itemUuid && !data.itemName) {
+                throw new Error("Item UUID or Item Name is required");
+            }
+
+            if (data.selected) {
+                data.actorUuid = canvas?.tokens?.controlled[0]?.actor?.uuid;
+            }
+            const actor = await fromUuid(data.actorUuid);
+            if (!actor) throw new Error(`Target actor not found: ${data.actorUuid}`);
+            if ((actor as any).documentName !== "Actor") {
+                throw new Error(`Target entity must be an Actor, got ${(actor as any).documentName}`);
+            }
+
+            let itemEntity: any | null = null;
+            if (data.itemUuid) {
+                itemEntity = await fromUuid(data.itemUuid);
+            } else if (data.itemName) {
+                itemEntity = (actor as any).items.find((i: any) => i.name.toLowerCase() === data.itemName.toLowerCase());
+            }
+
+            if (!itemEntity) throw new Error(`Item not found: ${data.itemUuid || data.itemName}`);
+
+            const amountToRemove = data.quantity || null;
+            const currentQuantity = getProperty(itemEntity, 'system.quantity');
+            let finalQuantity = 0;
+
+            if (amountToRemove && typeof currentQuantity === 'number' && currentQuantity > amountToRemove) {
+                finalQuantity = currentQuantity - amountToRemove;
+                await itemEntity.update({ "system.quantity": finalQuantity });
+            } else {
+                await itemEntity.delete();
+            }
+
+            socketManager?.send({
+                type: "remove-result",
+                requestId: data.requestId,
+                actorUuid: data.actorUuid,
+                itemUuid: itemEntity.uuid,
+                quantity: finalQuantity,
+                success: true
+            });
+        } catch (error) {
+            ModuleLogger.error(`Error removing item:`, error);
+            socketManager?.send({
+                type: "remove-result",
+                requestId: data.requestId,
+                success: false,
+                error: (error as Error).message
+            });
+        }
+    }
 });

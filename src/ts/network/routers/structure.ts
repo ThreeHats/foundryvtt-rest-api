@@ -4,14 +4,14 @@ import { ModuleLogger } from "../../utils/logger";
 export const router = new Router("structureRouter");
 
 router.addRoute({
-  actionType: "get-structure",
+  actionType: "structure",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received structure request`);
 
     try {
       // Get all folders
-      const folders = Object.entries((game as Game).folders?.contents || []).map(([_, folder]) => {
+      const folders = Object.entries(game.folders?.contents || []).map(([_, folder]) => {
         return {
           id: folder.id,
           name: folder.name,
@@ -24,7 +24,7 @@ router.addRoute({
       });
 
       // Get all compendiums
-      const compendiums = (game as Game).packs.contents.map(pack => {
+      const compendiums = game.packs.contents.map(pack => {
         return {
           id: pack.collection,
           name: pack.metadata.label,
@@ -37,7 +37,7 @@ router.addRoute({
       });
 
       socketManager?.send({
-        type: "structure-data",
+        type: "structure-result",
         requestId: data.requestId,
         folders,
         compendiums
@@ -45,7 +45,7 @@ router.addRoute({
     } catch (error) {
       ModuleLogger.error(`Error getting structure:`, error);
       socketManager?.send({
-        type: "structure-data",
+        type: "structure-result",
         requestId: data.requestId,
         error: (error as Error).message,
         folders: [],
@@ -56,7 +56,7 @@ router.addRoute({
 });
 
 router.addRoute({
-  actionType: "get-contents",
+  actionType: "contents",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received contents request for path: ${data.path}`);
@@ -66,7 +66,7 @@ router.addRoute({
 
       if (data.path.startsWith("Compendium.")) {
         // Handle compendium path
-        const pack = (game as Game).packs.get(data.path.replace("Compendium.", ""));
+        const pack = game.packs.get(data.path.replace("Compendium.", ""));
         if (!pack) {
           throw new Error(`Compendium not found: ${data.path}`);
         }
@@ -93,7 +93,7 @@ router.addRoute({
         }
 
         const folderId = folderMatch[1];
-        const folder = (game as Game).folders?.get(folderId);
+        const folder = game.folders?.get(folderId);
 
         if (!folder) {
           throw new Error(`Folder not found: ${data.path}`);
@@ -112,7 +112,7 @@ router.addRoute({
       }
 
       socketManager?.send({
-        type: "contents-data",
+        type: "contents-result",
         requestId: data.requestId,
         path: data.path,
         entities: contents
@@ -120,7 +120,7 @@ router.addRoute({
     } catch (error) {
       ModuleLogger.error(`Error getting contents:`, error);
       socketManager?.send({
-        type: "contents-data",
+        type: "contents-result",
         requestId: data.requestId,
         path: data.path,
         error: (error as Error).message,

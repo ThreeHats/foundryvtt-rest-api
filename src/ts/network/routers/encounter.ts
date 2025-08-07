@@ -4,19 +4,19 @@ import { ModuleLogger } from "../../utils/logger";
 export const router = new Router("encounterRouter");
 
 router.addRoute({
-  actionType: "get-encounters",
+  actionType: "encounters",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received request for encounters`);
 
     try {
-      const encounters = (game as Game).combats?.contents.map(combat => {
+      const encounters = game.combats?.contents.map(combat => {
         return {
           id: combat.id,
           name: combat.name,
           round: combat.round,
           turn: combat.turn,
-          current: combat.id === (game as Game).combat?.id,
+          current: combat.id === game.combat?.id,
           combatants: combat.combatants.contents.map(c => ({
             id: c.id,
             name: c.name,
@@ -31,14 +31,14 @@ router.addRoute({
       }) || [];
 
       socketManager?.send({
-        type: "encounters-list",
+        type: "encounters-result",
         requestId: data.requestId,
         encounters
       });
     } catch (error) {
       ModuleLogger.error(`Error getting encounters list:`, error);
       socketManager?.send({
-        type: "encounters-list",
+        type: "encounters-result",
         requestId: data.requestId,
         error: (error as Error).message,
         encounters: []
@@ -84,7 +84,7 @@ router.addRoute({
         let addedTokenIds = new Set();
 
         if (data.startWithPlayers) {
-          const currentScene = (game as Game).scenes?.viewed;
+          const currentScene = game.scenes?.viewed;
 
           if (currentScene) {
             const playerTokens = currentScene.tokens?.filter(token => !!token.actor && token.actor.hasPlayerOwner) ?? [];
@@ -127,7 +127,7 @@ router.addRoute({
         await combat.activate();
 
         socketManager?.send({
-          type: "encounter-started",
+          type: "start-encounter-result",
           requestId: data.requestId,
           encounterId: combat.id,
           encounter: {
@@ -153,7 +153,7 @@ router.addRoute({
     } catch (error) {
       ModuleLogger.error(`Error starting encounter:`, error);
       socketManager?.send({
-        type: "encounter-started",
+        type: "start-encounter-result",
         requestId: data.requestId,
         error: (error as Error).message
       });
@@ -162,13 +162,13 @@ router.addRoute({
 });
 
 router.addRoute({
-  actionType: "encounter-next-turn",
+  actionType: "next-turn",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received request for next turn in encounter: ${data.encounterId || 'active'}`);
 
     try {
-      const combat = data.encounterId ? (game as Game).combats?.get(data.encounterId) : (game as Game).combat;
+      const combat = data.encounterId ? game.combats?.get(data.encounterId) : game.combat;
 
       if (!combat) {
         throw new Error(data.encounterId ? `Encounter with ID ${data.encounterId} not found` : "No active encounter");
@@ -177,7 +177,7 @@ router.addRoute({
       await combat.nextTurn();
 
       socketManager?.send({
-        type: "encounter-navigation",
+        type: "next-turn-result",
         requestId: data.requestId,
         encounterId: combat.id,
         action: "nextTurn",
@@ -195,7 +195,7 @@ router.addRoute({
     } catch (error) {
       ModuleLogger.error(`Error advancing to next turn:`, error);
       socketManager?.send({
-        type: "encounter-navigation",
+        type: "next-turn-result",
         requestId: data.requestId,
         error: (error as Error).message
       });
@@ -204,13 +204,13 @@ router.addRoute({
 });
 
 router.addRoute({
-  actionType: "encounter-next-round",
+  actionType: "next-round",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received request for next round in encounter: ${data.encounterId || 'active'}`);
 
     try {
-      const combat = data.encounterId ? (game as Game).combats?.get(data.encounterId) : (game as Game).combat;
+      const combat = data.encounterId ? game.combats?.get(data.encounterId) : game.combat;
 
       if (!combat) {
         throw new Error(data.encounterId ? `Encounter with ID ${data.encounterId} not found` : "No active encounter");
@@ -219,7 +219,7 @@ router.addRoute({
       await combat.nextRound();
 
       socketManager?.send({
-        type: "encounter-navigation",
+        type: "next-round-result",
         requestId: data.requestId,
         encounterId: combat.id,
         action: "nextRound",
@@ -237,7 +237,7 @@ router.addRoute({
     } catch (error) {
       ModuleLogger.error(`Error advancing to next round:`, error);
       socketManager?.send({
-        type: "encounter-navigation",
+        type: "next-round-result",
         requestId: data.requestId,
         error: (error as Error).message
       });
@@ -246,13 +246,13 @@ router.addRoute({
 });
 
 router.addRoute({
-  actionType: "encounter-previous-turn",
+  actionType: "last-turn",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received request for previous turn in encounter: ${data.encounterId || 'active'}`);
 
     try {
-      const combat = data.encounterId ? (game as Game).combats?.get(data.encounterId) : (game as Game).combat;
+      const combat = data.encounterId ? game.combats?.get(data.encounterId) : game.combat;
 
       if (!combat) {
         throw new Error(data.encounterId ? `Encounter with ID ${data.encounterId} not found` : "No active encounter");
@@ -261,7 +261,7 @@ router.addRoute({
       await combat.previousTurn();
 
       socketManager?.send({
-        type: "encounter-navigation",
+        type: "last-turn-result",
         requestId: data.requestId,
         encounterId: combat.id,
         action: "previousTurn",
@@ -279,7 +279,7 @@ router.addRoute({
     } catch (error) {
       ModuleLogger.error(`Error going back to previous turn:`, error);
       socketManager?.send({
-        type: "encounter-navigation",
+        type: "last-turn-result",
         requestId: data.requestId,
         error: (error as Error).message
       });
@@ -288,13 +288,13 @@ router.addRoute({
 });
 
 router.addRoute({
-  actionType: "encounter-previous-round",
+  actionType: "last-round",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received request for previous round in encounter: ${data.encounterId || 'active'}`);
 
     try {
-      const combat = data.encounterId ? (game as Game).combats?.get(data.encounterId) : (game as Game).combat;
+      const combat = data.encounterId ? game.combats?.get(data.encounterId) : game.combat;
 
       if (!combat) {
         throw new Error(data.encounterId ? `Encounter with ID ${data.encounterId} not found` : "No active encounter");
@@ -303,7 +303,7 @@ router.addRoute({
       await combat.previousRound();
 
       socketManager?.send({
-        type: "encounter-navigation",
+        type: "last-round-result",
         requestId: data.requestId,
         encounterId: combat.id,
         action: "previousRound",
@@ -338,10 +338,10 @@ router.addRoute({
     try {
       let encounterId = data.encounterId;
       if (!encounterId) {
-        encounterId = (game as Game).combat?.id;
+        encounterId = game.combat?.id;
       }
 
-      const combat = (game as Game).combats?.get(encounterId);
+      const combat = game.combats?.get(encounterId);
 
       if (!combat) {
         throw new Error(`No encounter not found`);
@@ -350,7 +350,7 @@ router.addRoute({
       await combat.delete();
 
       socketManager?.send({
-        type: "encounter-ended",
+        type: "end-encounter-result",
         requestId: data.requestId,
         encounterId: encounterId,
         message: "Encounter successfully ended"
@@ -358,7 +358,7 @@ router.addRoute({
     } catch (error) {
       ModuleLogger.error(`Error ending encounter:`, error);
       socketManager?.send({
-        type: "encounter-ended",
+        type: "end-encounter-result",
         requestId: data.requestId,
         error: (error as Error).message
       });
@@ -373,7 +373,7 @@ router.addRoute({
     ModuleLogger.info(`Received add-to-encounter request for encounter: ${data.encounterId}`);
 
     try {
-      const combat = data.encounterId ? (game as Game).combats?.get(data.encounterId) : (game as Game).combat;
+      const combat = data.encounterId ? game.combats?.get(data.encounterId) : game.combat;
 
       if (!combat) {
         throw new Error(data.encounterId ? `Encounter with ID ${data.encounterId} not found` : "No active encounter");
@@ -402,7 +402,7 @@ router.addRoute({
               await combat.createEmbeddedDocuments("Combatant", [combatantData]);
               addedEntities.push(uuid);
             } else if (entity.documentName === "Actor") {
-              const scene = (game as Game).scenes?.viewed;
+              const scene = game.scenes?.viewed;
               if (scene) {
                 const tokenForActor = scene.tokens?.find(t => t.actor?.id === entity.id);
                 if (tokenForActor) {
@@ -477,7 +477,7 @@ router.addRoute({
     ModuleLogger.info(`Received remove-from-encounter request for encounter: ${data.encounterId}`);
 
     try {
-      const combat = data.encounterId ? (game as Game).combats?.get(data.encounterId) : (game as Game).combat;
+      const combat = data.encounterId ? game.combats?.get(data.encounterId) : game.combat;
 
       if (!combat) {
         throw new Error(data.encounterId ? `Encounter with ID ${data.encounterId} not found` : "No active encounter");

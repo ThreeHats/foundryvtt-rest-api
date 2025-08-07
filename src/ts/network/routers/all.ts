@@ -9,6 +9,7 @@ import {router as SheetRouter} from "./sheet"
 import {router as MacroRouter} from "./macro"
 import {router as UtilityRouter} from "./utility"
 import {router as FileSystemRouter} from "./fileSystem"
+import {router as Dnd5eRouter} from "./dnd5e"
 
 export const routers: Router[] = [
     PingPongRouter,
@@ -20,5 +21,6 @@ export const routers: Router[] = [
     SheetRouter,
     MacroRouter,
     UtilityRouter,
-    FileSystemRouter
+    FileSystemRouter,
+    Dnd5eRouter
 ]

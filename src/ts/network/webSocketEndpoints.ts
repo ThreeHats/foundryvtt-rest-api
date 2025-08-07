@@ -7,9 +7,9 @@ import { Router } from "./routers/baseRouter";
 
 export function initializeWebSocket() {
     // Get settings
-    const wsRelayUrl = (game as Game).settings.get(moduleId, "wsRelayUrl") as string;
-    const apiKey = (game as Game).settings.get(moduleId, "apiKey") as string;
-    const module = (game as Game).modules.get(moduleId) as FoundryRestApi;
+    const wsRelayUrl = game.settings.get(moduleId, "wsRelayUrl") as string;
+    const apiKey = game.settings.get(moduleId, "apiKey") as string;
+    const module = game.modules.get(moduleId) as FoundryRestApi;
     
     if (!wsRelayUrl) {
       ModuleLogger.error(`WebSocket relay URL is empty. Please configure it in module settings.`);

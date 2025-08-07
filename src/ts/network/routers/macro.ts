@@ -4,13 +4,13 @@ import { ModuleLogger } from "../../utils/logger";
 export const router = new Router("macroRouter");
 
 router.addRoute({
-  actionType: "get-macros",
+  actionType: "macros",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received request for macros`);
 
     try {
-      const macros = (game as Game).macros?.contents.map(macro => {
+      const macros = game.macros?.contents.map(macro => {
         return {
           uuid: macro.uuid,
           id: macro.id,
@@ -25,14 +25,14 @@ router.addRoute({
       }) || [];
 
       socketManager?.send({
-        type: "macros-list",
+        type: "macros-result",
         requestId: data.requestId,
         macros
       });
     } catch (error) {
       ModuleLogger.error(`Error getting macros list:`, error);
       socketManager?.send({
-        type: "macros-list",
+        type: "macros-result",
         requestId: data.requestId,
         error: (error as Error).message,
         macros: []
@@ -42,7 +42,7 @@ router.addRoute({
 });
 
 router.addRoute({
-  actionType: "execute-macro",
+  actionType: "macro-execute",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received request to execute macro: ${data.uuid}`);
@@ -75,7 +75,7 @@ router.addRoute({
       }
 
       socketManager?.send({
-        type: "macro-execution-result",
+        type: "macro-execute-result",
         requestId: data.requestId,
         uuid: data.uuid,
         success: true,
@@ -84,7 +84,7 @@ router.addRoute({
     } catch (error) {
       ModuleLogger.error(`Error executing macro:`, error);
       socketManager?.send({
-        type: "macro-execution-result",
+        type: "macro-execute-result",
         requestId: data.requestId,
         uuid: data.uuid || "",
         success: false,
