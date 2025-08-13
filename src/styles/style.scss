@@ -44,3 +44,8 @@
     height: 36px;
   }
 }
+
+// put the show info button below the API key input
+[data-settings-key="foundry-rest-api.apiKey"] > .form-fields {
+    flex-direction: column !important;
+}

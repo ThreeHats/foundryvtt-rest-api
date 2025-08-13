@@ -59,13 +59,13 @@ export default defineConfig({
       output: async function(styles) {
         // Write to FoundryVTT path for development
         if (!process.env.CI) {
-          const moduleDir = path.join(foundryVttDataPath, moduleId);
+          const moduleDir = path.join(foundryVttDataPath, moduleId, "styles");
           await ensureDirectory(moduleDir);
           await fsPromises.writeFile(path.join(moduleDir, "style.css"), styles);
         }
         // Always write to dist for CI
-        await ensureDirectory("dist");
-        await fsPromises.writeFile("dist/style.css", styles);
+        await ensureDirectory("dist/styles");
+        await fsPromises.writeFile("dist/styles/style.css", styles);
       },
       sourceMap: true,
       watch: ["src/styles/*.scss"],

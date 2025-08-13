@@ -17,6 +17,7 @@ export const SETTINGS = {
     ACTOR_CURRENCY_ATTRIBUTE: "actorCurrencyAttribute",
     WS_RELAY_URL: "wsRelayUrl",
     API_KEY: "apiKey",
+    CUSTOM_NAME: "customName",
     LOG_LEVEL: "logLevel",
     PING_INTERVAL: "pingInterval",
     RECONNECT_MAX_ATTEMPTS: "reconnectMaxAttempts",
@@ -95,6 +96,16 @@ export const SETTINGS = {
             config: true,
             type: String,
             default: game.world.id,
+            requiresReload: true
+        },
+
+        [SETTINGS.CUSTOM_NAME]: {
+            name: "Custom Client Name",
+            hint: "A custom name to identify this client (optional)",
+            scope: "world",
+            config: true,
+            type: String,
+            default: "",
             requiresReload: true
         },
 

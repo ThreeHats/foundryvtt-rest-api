@@ -1,4 +1,3 @@
-// src/ts/module.ts
 import "../styles/style.scss";
 import { FoundryRestApi } from "./types";
 import { moduleId, recentRolls, MAX_ROLLS_STORED, CONSTANTS, SETTINGS } from "./constants";
@@ -70,11 +69,105 @@ Hooks.once("init", () => {
 });
 
 // Replace the API key input field with a password field
-Hooks.on("renderSettingsConfig", (_: SettingsConfig, html: JQuery) => {
-  const apiKeyInput = html.find(`input[name="${moduleId}.apiKey"]`);
+Hooks.on("renderSettingsConfig", (_: SettingsConfig, html: JQuery | HTMLElement) => {
+  const htmlJQuery = html instanceof HTMLElement ? $(html) : html;
+  const apiKeyInput = htmlJQuery.find(`input[name="${moduleId}.apiKey"]`);
   if (apiKeyInput.length) {
     // Change the input type to password
     apiKeyInput.attr("type", "password");
+
+    // Add a button to show the client ID
+    const showClientInfoButton = $('<button type="button" style="margin-left: 10px;"><i class="fas fa-info-circle"></i> Show Client Info</button>');
+    apiKeyInput.after(showClientInfoButton);
+
+    showClientInfoButton.on("click", () => {
+      const module = game.modules.get(moduleId) as FoundryRestApi;
+      const webSocketManager = module.api.getWebSocketManager();
+      if (webSocketManager) {
+        const clientId = webSocketManager.getClientId();
+        const worldId = game.world.id;
+        const worldTitle = (game.world as any).title;
+        const foundryVersion = game.version;
+        const systemId = game.system.id;
+        const systemTitle = (game.system as any).title || game.system.id;
+        const systemVersion = (game.system as any).version || 'unknown';
+        const customName = game.settings.get(moduleId, "customName") as string;
+        
+        new Dialog({
+          title: "Client Information",
+          content: `
+            <div class="form-group">
+                <label>Client ID</label>
+                <div class="form-fields">
+                    <input type="text" value="${clientId}" readonly>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>World ID</label>
+                <div class="form-fields">
+                    <input type="text" value="${worldId}" readonly>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>World Title</label>
+                <div class="form-fields">
+                    <input type="text" value="${worldTitle}" readonly>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Foundry Version</label>
+                <div class="form-fields">
+                    <input type="text" value="${foundryVersion}" readonly>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>System ID</label>
+                <div class="form-fields">
+                    <input type="text" value="${systemId}" readonly>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>System Title</label>
+                <div class="form-fields">
+                    <input type="text" value="${systemTitle}" readonly>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>System Version</label>
+                <div class="form-fields">
+                    <input type="text" value="${systemVersion}" readonly>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Custom Name</label>
+                <div class="form-fields">
+                    <input type="text" value="${customName}" readonly>
+                </div>
+            </div>
+            <p class="notes">Click any field to copy its value.</p>
+          `,
+          buttons: {
+            ok: {
+              label: "OK"
+            }
+          },
+          render: (html: JQuery | HTMLElement) => {
+            const htmlJQuery = html instanceof HTMLElement ? $(html) : html;
+            const inputs = htmlJQuery.find('input[type="text"]');
+            inputs.css('cursor', 'pointer');
+            inputs.on('click', (event: JQuery.ClickEvent) => {
+              const input = event.currentTarget;
+              navigator.clipboard.writeText(input.value).then(() => {
+                ui.notifications.info(`Copied to clipboard.`);
+                input.select();
+              });
+            });
+          }
+        }).render(true);
+      } else {
+        ui.notifications.warn("WebSocketManager is not available.");
+      }
+    });
 
     // Add an event listener to save the value when it changes
     apiKeyInput.on("change", (event) => {
@@ -83,6 +176,30 @@ Hooks.on("renderSettingsConfig", (_: SettingsConfig, html: JQuery) => {
         new Dialog({
           title: "Reload Required",
           content: "<p>The API Key has been updated. A reload is required for the changes to take effect. Would you like to reload now?</p>",
+          buttons: {
+            yes: {
+              label: "Reload",
+              callback: () => window.location.reload()
+            },
+            no: {
+              label: "Later"
+            }
+          },
+          default: "yes"
+        }).render(true);
+      });
+    });
+  }
+
+  // Handle custom name changes
+  const customNameInput = htmlJQuery.find(`input[name="${moduleId}.customName"]`);
+  if (customNameInput.length) {
+    customNameInput.on("change", (event) => {
+      const newValue = (event.target as HTMLInputElement).value;
+      game.settings.set(moduleId, "customName", newValue).then(() => {
+        new Dialog({
+          title: "Reload Required",
+          content: "<p>The Custom Name has been updated. A reload is required for the changes to take effect. Would you like to reload now?</p>",
           buttons: {
             yes: {
               label: "Reload",

@@ -228,59 +228,59 @@ Hooks.once('init', () => {
             handler: (data, context) => useAbilityHandler(data, context, 'item')
         });
 
-        // Modify a resource on an actor
+        // Modify actor experience
         router.addRoute({
-            actionType: "modify-resource",
+            actionType: "modify-experience",
             handler: async (data, context) => {
                 const socketManager = context?.socketManager;
-                ModuleLogger.info(`Received modify-resource request:`, data);
+                ModuleLogger.info(`Received modify-experience request:`, data);
 
                 try {
-                    const { actorUuid, resourceName, amount } = data;
-                    if (!actorUuid) throw new Error("actorUuid is required");
-                    if (!resourceName) throw new Error("resourceName is required");
+                    const { actorUuid, selected, amount } = data;
+                    if (!actorUuid && !selected) throw new Error("Either actorUuid or selected must be provided");
                     if (typeof amount !== 'number') throw new Error("amount must be a number");
 
-                    const actor: any = await fromUuid(actorUuid);
-                    if (!actor) throw new Error(`Actor not found with UUID: ${actorUuid}`);
-
-                    const resources = actor.system.resources;
-                    let resourceKey: string | null = null;
-                    for (const key in resources) {
-                        if (resources[key].label.toLowerCase() === resourceName.toLowerCase()) {
-                            resourceKey = key;
-                            break;
+                    let actor: any = null;
+                    if (actorUuid) {
+                        actor = await fromUuid(actorUuid);
+                    } else if (selected) {
+                        const selectedTokens = canvas.tokens?.controlled;
+                        if (!selectedTokens || selectedTokens.length === 0) {
+                            throw new Error("No token selected");
                         }
+                        if (selectedTokens.length > 1) {
+                            ModuleLogger.warn("Multiple tokens selected, using the first one.");
+                        }
+                        actor = selectedTokens[0].actor;
                     }
 
-                    if (!resourceKey) throw new Error(`Resource "${resourceName}" not found on actor ${actor.name}`);
-                    
-                    const path = `system.resources.${resourceKey}.value`;
-                    const currentValue = getProperty(actor, path) || 0;
-                    const newValue = currentValue + amount;
+                    if (!actor) throw new Error(`Actor not found`);
 
-                    await actor.update({ [path]: newValue });
+                    const currentXp = actor.system.details.xp.value;
+                    const newXp = currentXp + amount;
+
+                    await actor.update({ "system.details.xp.value": newXp });
 
                     socketManager?.send({
-                        type: "modify-resource-result",
+                        type: "modify-experience-result",
                         requestId: data.requestId,
                         data: {
-                            uuid: actorUuid,
-                            resource: resourceName,
-                            oldValue: currentValue,
-                            newValue: newValue,
+                            actorUuid: actor.uuid,
+                            oldXp: currentXp,
+                            newXp: newXp,
                         },
                     });
 
                 } catch (error) {
-                    ModuleLogger.error(`Error in modify-resource:`, error);
+                    ModuleLogger.error(`Error in modify-experience:`, error);
                     socketManager?.send({
-                        type: "modify-resource-result",
+                        type: "modify-experience-result",
                         requestId: data.requestId,
                         error: (error as Error).message,
                     });
                 }
             }
         });
+
     }
-}); 
+});

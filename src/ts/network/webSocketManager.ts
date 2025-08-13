@@ -138,6 +138,22 @@ export class WebSocketManager {
       const wsUrl = new URL(this.url);
       wsUrl.searchParams.set('id', this.clientId);
       wsUrl.searchParams.set('token', this.token);
+      if (game.world) {
+        wsUrl.searchParams.set('worldId', game.world.id);
+        wsUrl.searchParams.set('worldTitle', (game.world as any).title);
+      }
+      
+      // Add version and system information
+      wsUrl.searchParams.set('foundryVersion', game.version);
+      wsUrl.searchParams.set('systemId', game.system.id);
+      wsUrl.searchParams.set('systemTitle', (game.system as any).title || game.system.id);
+      wsUrl.searchParams.set('systemVersion', (game.system as any).version || 'unknown');
+      
+      // Add custom name if set
+      const customName = game.settings.get(moduleId, "customName") as string;
+      if (customName) {
+        wsUrl.searchParams.set('customName', customName);
+      }
       
       ModuleLogger.info(`Connecting to WebSocket at ${wsUrl.toString()}`);
       
@@ -201,6 +217,10 @@ export class WebSocketManager {
 
   isConnected(): boolean {
     return this.socket !== null && this.socket.readyState === WebSocket.OPEN;
+  }
+
+  getClientId(): string {
+    return this.clientId;
   }
 
   send(data: any): boolean {

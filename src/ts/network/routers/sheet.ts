@@ -1,14 +1,24 @@
 import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
+import { getFoundryVersionMajor } from "../../utils/version";
 
 export const router = new Router("sheetRouter");
 
 router.addRoute({
-  actionType: "actor-sheet",
+  actionType: "get-sheet",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
-    ModuleLogger.info(`Received sheet HTML request for UUID: ${data.uuid}`);
-    let sheet: ActorSheet | undefined;
+    ModuleLogger.info(`Received sheet request for UUID: ${data.uuid}`);
+
+    if (getFoundryVersionMajor() > 12) {
+      ModuleLogger.error(`Foundry version ${getFoundryVersionMajor()} does not support this endpoint`);
+      socketManager?.send({
+        type: "get-sheet-response",
+        requestId: data.requestId,
+        data: { error: "This endpoint is only supported in Foundry VTT version 12" }
+      });
+      return;
+    }
 
     try {
       let actor: Actor | TokenDocument | null = null;
@@ -28,130 +38,177 @@ router.addRoute({
       if (!actor) {
         ModuleLogger.error(`Entity not found for UUID: ${data.uuid}`);
         socketManager?.send({
-          type: "actor-sheet-result",
+          type: "get-sheet-response",
           requestId: data.requestId,
           data: { error: "Entity not found", uuid: data.uuid }
         });
         return;
       }
 
-      const responseUuid = actor.uuid;
-      sheet = await actor.sheet?.render(true) as ActorSheet;
+      const sheet = actor.sheet?.render(true) as ActorSheet;
 
-      // It seems that even with awaiting the render, we need to give the DOM a moment to catch up.
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // The sheet's `id` property corresponds to the ID of the wrapper element.
-      const appElement = document.getElementById(sheet.id);
-
-      if (!appElement) {
-        ModuleLogger.error(`Failed to find actor sheet element with ID ${sheet.id}`, sheet);
-        throw new Error("Failed to find actor sheet element");
-      }
-
-      const sheetAppId = appElement.dataset.appid ?? '';
-      let html = appElement.outerHTML;
-      let css = '';
-
-      const appStyles = document.querySelectorAll('style[data-appid]');
-      appStyles.forEach(style => {
-        const styleAppId = (style as HTMLElement).dataset.appid;
-        if (styleAppId === sheetAppId) {
-          css += style.textContent + '\n';
-        }
-      });
-
-      const systemStyles = document.querySelectorAll(`style[id^="system-${(actor as any).type}"]`);
-      systemStyles.forEach(style => {
-        css += style.textContent + '\n';
-      });
-
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = html;
-
-      const classNames = new Set<string>();
-      const ids = new Set<string>();
-
-      function extractClassesAndIds(element: Element) {
-        if (element.classList && element.classList.length) {
-          element.classList.forEach(className => classNames.add(className));
-        }
-
-        if (element.id) {
-          ids.add(element.id);
-        }
-
-        for (let i = 0; i < element.children.length; i++) {
-          extractClassesAndIds(element.children[i]);
-        }
-      }
-
-      extractClassesAndIds(tempDiv);
-
-      const uniqueClassNames = Array.from(classNames);
-      const uniqueIds = Array.from(ids);
-
-      ModuleLogger.debug(`Extracted ${uniqueClassNames.length} unique classes and ${uniqueIds.length} unique IDs`);
-
-      const allStyles = document.querySelectorAll('style');
-      const allLinks = document.querySelectorAll('link[rel="stylesheet"]');
-
-      allStyles.forEach(style => {
-        if (style.dataset.appid && style.dataset.appid === sheetAppId) {
-          return;
-        }
-
-        const styleContent = style.textContent || '';
-
-        const isRelevant = uniqueClassNames.some(className => 
-          styleContent.includes(`.${className}`)) || 
-          uniqueIds.some(id => styleContent.includes(`#${id}`)) ||
-          styleContent.includes('.window-app') || 
-          styleContent.includes('.sheet') || 
-          styleContent.includes('.actor-sheet') ||
-          styleContent.includes(`.${(actor as any).type}-sheet`);
-
-        if (isRelevant) {
-          ModuleLogger.debug(`Adding relevant inline style`);
-          css += styleContent + '\n';
-        }
-      });
-
-      const stylesheetPromises = Array.from(allLinks).map(async (link) => {
+      setTimeout(async () => {
         try {
-          const href = link.getAttribute('href');
-          if (!href) return '';
-
-          if (href.includes('fonts.googleapis.com')) return '';
-
-          ModuleLogger.debug(`Fetching external CSS from: ${href}`);
-          const fullUrl = href.startsWith('http') ? href : 
-                          href.startsWith('/') ? `${window.location.origin}${href}` : 
-                          `${window.location.origin}/${href}`;
-
-          const response = await fetch(fullUrl);
-          if (!response.ok) {
-            ModuleLogger.warn(`Failed to fetch CSS: ${fullUrl}, status: ${response.status}`);
-            return '';
+          if (!sheet.element || !sheet.element[0]) {
+            throw new Error("Failed to render actor sheet");
           }
 
-          const styleContent = await response.text();
-          return styleContent;
-        } catch (e) {
-          ModuleLogger.warn(`Failed to fetch external CSS: ${e}`);
-          return '';
-        }
-      });
+          let html = sheet.element[0].outerHTML;
+          let css = '';
 
-      const allPromises = [...stylesheetPromises];
-      const externalStyles = await Promise.all(allPromises);
-      externalStyles.forEach(style => {
-        css += style + '\n';
-      });
+          const sheetAppId = String(sheet.appId);
 
-      if (css.length < 100) {
-        ModuleLogger.warn(`CSS fetch failed or returned minimal content. Adding fallback styles.`);
-        css += `
+          const appStyles = document.querySelectorAll('style[data-appid]');
+          appStyles.forEach(style => {
+            const styleAppId = (style as HTMLElement).dataset.appid;
+            if (styleAppId === sheetAppId) {
+              css += style.textContent + '\n';
+            }
+          });
+
+          const systemStyles = document.querySelectorAll(`style[id^="system-${(actor as any).type}"]`);
+          systemStyles.forEach(style => {
+            css += style.textContent + '\n';
+          });
+
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = html;
+
+          const classNames = new Set<string>();
+          const ids = new Set<string>();
+
+          function extractClassesAndIds(element: Element) {
+            if (element.classList && element.classList.length) {
+              element.classList.forEach(className => classNames.add(className));
+            }
+
+            if (element.id) {
+              ids.add(element.id);
+            }
+
+            for (let i = 0; i < element.children.length; i++) {
+              extractClassesAndIds(element.children[i]);
+            }
+          }
+
+          extractClassesAndIds(tempDiv);
+
+          const uniqueClassNames = Array.from(classNames);
+          const uniqueIds = Array.from(ids);
+
+          ModuleLogger.debug(`Extracted ${uniqueClassNames.length} unique classes and ${uniqueIds.length} unique IDs`);
+
+          const allStyles = document.querySelectorAll('style');
+          const allLinks = document.querySelectorAll('link[rel="stylesheet"]');
+
+          allStyles.forEach(style => {
+            if (style.dataset.appid && style.dataset.appid === sheetAppId) {
+              return;
+            }
+
+            const styleContent = style.textContent || '';
+
+            const isRelevant = uniqueClassNames.some(className => 
+              styleContent.includes(`.${className}`)) || 
+              uniqueIds.some(id => styleContent.includes(`#${id}`)) ||
+              styleContent.includes('.window-app') || 
+              styleContent.includes('.sheet') || 
+              styleContent.includes('.actor-sheet') ||
+              styleContent.includes(`.${(actor as any).type}-sheet`);
+
+            if (isRelevant) {
+              ModuleLogger.debug(`Adding relevant inline style`);
+              css += styleContent + '\n';
+            }
+          });
+
+          const stylesheetPromises = Array.from(allLinks).map(async (link) => {
+            try {
+              const href = link.getAttribute('href');
+              if (!href) return '';
+
+              if (href.includes('fonts.googleapis.com')) return '';
+
+              ModuleLogger.debug(`Fetching external CSS from: ${href}`);
+              const fullUrl = href.startsWith('http') ? href : 
+                              href.startsWith('/') ? `${window.location.origin}${href}` : 
+                              `${window.location.origin}/${href}`;
+
+              const response = await fetch(fullUrl);
+              if (!response.ok) {
+                ModuleLogger.warn(`Failed to fetch CSS: ${fullUrl}, status: ${response.status}`);
+                return '';
+              }
+
+              const styleContent = await response.text();
+              return styleContent;
+            } catch (e) {
+              ModuleLogger.warn(`Failed to fetch external CSS: ${e}`);
+              return '';
+            }
+          });
+
+          const baseUrl = window.location.origin;
+          ModuleLogger.debug(`Base URL for fetching CSS: ${baseUrl}`);
+
+          const coreStylesheets = [
+            `${baseUrl}/css/style.css`,
+            `${baseUrl}/styles/style.css`,
+            `${baseUrl}/styles/foundry.css`,
+            `${baseUrl}/ui/sheets.css`,
+            `${baseUrl}/game/styles/foundry.css`,
+            `${baseUrl}/game/ui/sheets.css`,
+            `${baseUrl}/systems/${(game as Game).system.id}/system.css`,
+            `${baseUrl}/systems/${(game as Game).system.id}/styles/system.css`,
+            `${baseUrl}/game/systems/${(game as Game).system.id}/system.css`,
+            `${baseUrl}/game/systems/${(game as Game).system.id}/styles/system.css`
+          ];
+
+          ModuleLogger.debug(`All stylesheet links in document:`, 
+            Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
+              .map(link => link.getAttribute('href'))
+              .filter(Boolean)
+          );
+
+          const existingCSSPaths = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
+            .map(link => link.getAttribute('href'))
+            .filter((href): href is string => 
+              href !== null && 
+              !href.includes('fonts.googleapis.com') && 
+              !href.includes('//'));
+
+          coreStylesheets.push(...existingCSSPaths);
+
+          ModuleLogger.debug(`All style elements in document:`, 
+            document.querySelectorAll('style').length
+          );
+
+          const corePromises = coreStylesheets.map(async (path) => {
+            try {
+              ModuleLogger.debug(`Fetching core CSS from: ${path}`);
+              const response = await fetch(path);
+              if (!response.ok) {
+                ModuleLogger.warn(`Failed to fetch CSS: ${path}, status: ${response.status}`);
+                return '';
+              }
+
+              ModuleLogger.info(`Successfully loaded CSS from: ${path}`);
+              return await response.text();
+            } catch (e) {
+              ModuleLogger.warn(`Failed to fetch core CSS: ${e}`);
+              return '';
+            }
+          });
+
+          const allPromises = [...stylesheetPromises, ...corePromises];
+          const externalStyles = await Promise.all(allPromises);
+          externalStyles.forEach(style => {
+            css += style + '\n';
+          });
+
+          if (css.length < 100) {
+            ModuleLogger.warn(`CSS fetch failed or returned minimal content. Adding fallback styles.`);
+            css += `
               .window-app {
                 font-family: "Signika", sans-serif;
                 background: #f0f0e0;
@@ -181,43 +238,53 @@ router.addRoute({
                 max-height: 220px;
               }
             `;
-      }
+          }
 
-      ModuleLogger.debug(`Collected CSS: ${css.length} bytes`);
+          ModuleLogger.debug(`Collected CSS: ${css.length} bytes`);
 
-      html = html.replace(/src="([^"]+)"/g, (match, src) => {
-        if (src.startsWith('http')) return match;
-        if (src.startsWith('/')) return `src="${window.location.origin}${src}"`;
-        return `src="${window.location.origin}/${src}"`;
-      });
+          html = html.replace(/src="([^"]+)"/g, (match, src) => {
+            if (src.startsWith('http')) return match;
+            if (src.startsWith('/')) return `src="${window.location.origin}${src}"`;
+            return `src="${window.location.origin}/${src}"`;
+          });
 
-      css = css.replace(/url\(['"]?([^'")]+)['"]?\)/g, (match, url) => {
-        if (url.startsWith('http') || url.startsWith('data:')) return match;
-        if (url.startsWith('/')) return `url('${window.location.origin}${url}')`;
-        return `url('${window.location.origin}/${url}')`;
-      });
+          css = css.replace(/url\(['"]?([^'")]+)['"]?\)/g, (match, url) => {
+            if (url.startsWith('http') || url.startsWith('data:')) return match;
+            if (url.startsWith('/')) return `url('${window.location.origin}${url}')`;
+            return `url('${window.location.origin}/${url}')`;
+          });
 
-      sheet.close();
+          sheet.close();
 
-      socketManager?.send({
-        type: "actor-sheet-result",
-        requestId: data.requestId,
-        data: { html, css, uuid: responseUuid }
-      });
+          socketManager?.send({
+            type: "get-sheet-response",
+            requestId: data.requestId,
+            data: { html, css, uuid: data.uuid }
+          });
 
-      ModuleLogger.debug(`Sent actor sheet HTML response with requestId: ${data.requestId}`);
-      ModuleLogger.debug(`HTML length: ${html.length}, CSS length: ${css.length}`);
+          ModuleLogger.debug(`Sent actor sheet HTML response with requestId: ${data.requestId}`);
+          ModuleLogger.debug(`HTML length: ${html.length}, CSS length: ${css.length}`);
+        } catch (renderError) {
+          ModuleLogger.error(`Error capturing actor sheet HTML:`, renderError);
+          socketManager?.send({
+            type: "get-sheet-response",
+            requestId: data.requestId,
+            data: { error: "Failed to capture actor sheet HTML", uuid: data.uuid }
+          });
+
+          if (sheet && typeof sheet.close === 'function') {
+            sheet.close();
+          }
+        }
+      }, 500);
 
     } catch (error) {
-      ModuleLogger.error(`Error capturing/rendering actor sheet HTML:`, error);
+      ModuleLogger.error(`Error rendering actor sheet:`, error);
       socketManager?.send({
-        type: "actor-sheet-result",
+        type: "get-sheet-response",
         requestId: data.requestId,
-        data: { error: "Failed to capture or render actor sheet HTML", uuid: data.uuid }
+        data: { error: "Failed to render actor sheet", uuid: data.uuid }
       });
-      if (sheet && typeof sheet.close === 'function') {
-        sheet.close();
-      }
     }
   }
 });
