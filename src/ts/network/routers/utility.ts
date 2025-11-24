@@ -60,21 +60,24 @@ router.addRoute({
         canvas?.tokens?.releaseAll();
       }
 
-      let targets: TokenDocument[] = [];
+      // Use a Set to track unique tokens by UUID to avoid duplicates
+      const targetSet = new Set<TokenDocument>();
+      
       if (data.all) {
-        targets = scene.tokens?.contents || [];
+        const allTokens = scene.tokens?.contents || [];
+        allTokens.forEach(token => targetSet.add(token));
       }
       if (data.uuids && Array.isArray(data.uuids)) {
         const matchingTokens = scene.tokens?.filter(token => 
           data.uuids.includes(token.uuid)
         ) || [];
-        targets = [...targets, ...matchingTokens];
+        matchingTokens.forEach(token => targetSet.add(token));
       }
       if (data.name) {
         const matchingTokens = scene.tokens?.filter(token => 
           token.name?.toLowerCase() === data.name?.toLowerCase()
         ) || [];
-        targets = [...targets, ...matchingTokens];
+        matchingTokens.forEach(token => targetSet.add(token));
       }
       if (data.data) {
         const matchingTokens = scene.tokens?.filter(token => 
@@ -87,8 +90,11 @@ router.addRoute({
             return getProperty(tokenData, key) === value;
           })
         ) || [];
-        targets = [...targets, ...matchingTokens];
+        matchingTokens.forEach(token => targetSet.add(token));
       }
+
+      // Convert Set back to array
+      const targets = Array.from(targetSet);
 
       if (targets.length === 0) {
         throw new Error("No matching entities found");
