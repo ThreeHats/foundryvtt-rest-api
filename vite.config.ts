@@ -11,7 +11,7 @@ import { id as moduleId } from "./src/module.json";
 const moduleVersion = process.env.MODULE_VERSION;
 const githubProject = process.env.GH_PROJECT;
 const githubTag = process.env.GH_TAG;
-const foundtyVttDataModulesPath = process.env.FOUNDTY_VTT_DATA_MODULES_PATH
+const foundtyVttDataModulesPath = process.env.FOUNDRY_VTT_DATA_MODULES_PATH
 
 
 console.log("VSCODE_INJECTION", process.env.VSCODE_INJECTION);
