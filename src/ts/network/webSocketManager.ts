@@ -282,8 +282,19 @@ export class WebSocketManager {
       this.pingInterval = null;
     }
     
-    // Don't reconnect if this was a normal closure or if not primary GM
-    if (event.code !== WSCloseCodes.Normal && this.isPrimaryGM) {
+    // Don't reconnect for permanent failures or if not primary GM
+    // 1008 = Policy Violation (invalid API key, unauthorized)
+    // 1000 = Normal closure
+    if (event.code === WSCloseCodes.Normal || event.code === WSCloseCodes.PolicyViolation) {
+      if (event.code === WSCloseCodes.PolicyViolation) {
+        ModuleLogger.error(`Connection rejected: ${event.reason}. Check your API key in module settings.`);
+        ui.notifications?.error(`Foundry REST API: ${event.reason}. Check your API key in module settings.`);
+      }
+      return;
+    }
+    
+    // Reconnect for other failures if primary GM
+    if (this.isPrimaryGM) {
       this.scheduleReconnect();
     }
   }

@@ -3,6 +3,7 @@ import { WebSocketManager } from "./network/webSocketManager";
 // WebSocket close codes
 export enum WSCloseCodes {
   Normal = 1000,
+  PolicyViolation = 1008,  // Used for invalid API key, unauthorized access
   NoClientId = 4001,
   NoAuth = 4002,
   NoConnectedGuild = 4003,
