@@ -2,13 +2,13 @@ name: Discord Release Notification
 
 on:
   release:
-    types: [published]
+    types: [published, edited]
 
 jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - name: Send Discord Notification
+      - name: Send or Update Discord Notification
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
           DISCORD_ROLE_ID: "1359958202208354365"  # Role to ping on release
@@ -16,40 +16,92 @@ jobs:
           RELEASE_NAME: ${{ github.event.release.name }}
           RELEASE_URL: ${{ github.event.release.html_url }}
           RELEASE_BODY: ${{ github.event.release.body }}
+          RELEASE_ID: ${{ github.event.release.id }}
           REPO_NAME: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          ACTION_TYPE: ${{ github.event.action }}
         run: |
-          # Build the Discord message
-          CONTENT=$(cat <<'EOF'
-          {
-            "content": "<@&ROLE_ID_PLACEHOLDER>",
-            "embeds": [{
-              "title": "🚀 RELEASE_NAME_PLACEHOLDER",
-              "url": "RELEASE_URL_PLACEHOLDER",
-              "description": "RELEASE_BODY_PLACEHOLDER",
-              "color": 5814783,
-              "footer": {
-                "text": "REPO_NAME_PLACEHOLDER"
-              },
-              "timestamp": "TIMESTAMP_PLACEHOLDER"
-            }]
-          }
-          EOF
-          )
-
           # Escape the release body for JSON
           ESCAPED_BODY=$(echo "$RELEASE_BODY" | jq -Rs '.')
-          # Remove surrounding quotes from jq output
           ESCAPED_BODY=${ESCAPED_BODY:1:-1}
 
-          # Replace placeholders
-          CONTENT=$(echo "$CONTENT" | sed "s|ROLE_ID_PLACEHOLDER|$DISCORD_ROLE_ID|g")
-          CONTENT=$(echo "$CONTENT" | sed "s|RELEASE_NAME_PLACEHOLDER|$RELEASE_TAG - $RELEASE_NAME|g")
-          CONTENT=$(echo "$CONTENT" | sed "s|RELEASE_URL_PLACEHOLDER|$RELEASE_URL|g")
-          CONTENT=$(echo "$CONTENT" | sed "s|RELEASE_BODY_PLACEHOLDER|$ESCAPED_BODY|g")
-          CONTENT=$(echo "$CONTENT" | sed "s|REPO_NAME_PLACEHOLDER|$REPO_NAME|g")
-          CONTENT=$(echo "$CONTENT" | sed "s|TIMESTAMP_PLACEHOLDER|$(date -u +%Y-%m-%dT%H:%M:%SZ)|g")
+          # Build the Discord message payload (no role ping on edits)
+          if [ "$ACTION_TYPE" = "published" ]; then
+            CONTENT=$(jq -n \
+              --arg role "$DISCORD_ROLE_ID" \
+              --arg title "$RELEASE_TAG - $RELEASE_NAME" \
+              --arg url "$RELEASE_URL" \
+              --arg desc "$ESCAPED_BODY" \
+              --arg repo "$REPO_NAME" \
+              --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              '{
+                content: "<@&\($role)>",
+                embeds: [{
+                  title: "🚀 \($title)",
+                  url: $url,
+                  description: $desc,
+                  color: 5814783,
+                  footer: { text: $repo },
+                  timestamp: $ts
+                }]
+              }')
+          else
+            # No ping on edit, just update the embed
+            CONTENT=$(jq -n \
+              --arg title "$RELEASE_TAG - $RELEASE_NAME" \
+              --arg url "$RELEASE_URL" \
+              --arg desc "$ESCAPED_BODY" \
+              --arg repo "$REPO_NAME" \
+              --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              '{
+                embeds: [{
+                  title: "🚀 \($title) (updated)",
+                  url: $url,
+                  description: $desc,
+                  color: 5814783,
+                  footer: { text: $repo },
+                  timestamp: $ts
+                }]
+              }')
+          fi
 
-          # Send to Discord
-          curl -H "Content-Type: application/json" \
-               -d "$CONTENT" \
-               "$DISCORD_WEBHOOK"
+          # Try to get existing Discord message ID from release assets
+          DISCORD_MSG_ID=""
+          ASSET_URL=$(gh api "repos/$REPO_NAME/releases/$RELEASE_ID/assets" --jq '.[] | select(.name == "discord-message-id.txt") | .url' 2>/dev/null || true)
+          
+          if [ -n "$ASSET_URL" ]; then
+            DISCORD_MSG_ID=$(gh api -H "Accept: application/octet-stream" "$ASSET_URL" 2>/dev/null || true)
+          fi
+
+          if [ -n "$DISCORD_MSG_ID" ] && [ "$ACTION_TYPE" = "edited" ]; then
+            # Edit existing message
+            echo "Updating Discord message: $DISCORD_MSG_ID"
+            curl -s -X PATCH \
+              -H "Content-Type: application/json" \
+              -d "$CONTENT" \
+              "${DISCORD_WEBHOOK}/messages/${DISCORD_MSG_ID}"
+          else
+            # Post new message and save ID
+            echo "Posting new Discord message"
+            RESPONSE=$(curl -s -H "Content-Type: application/json" \
+              -d "$CONTENT" \
+              "${DISCORD_WEBHOOK}?wait=true")
+            
+            NEW_MSG_ID=$(echo "$RESPONSE" | jq -r '.id')
+            
+            if [ -n "$NEW_MSG_ID" ] && [ "$NEW_MSG_ID" != "null" ]; then
+              echo "Saving message ID: $NEW_MSG_ID"
+              
+              # Delete old asset if exists
+              if [ -n "$ASSET_URL" ]; then
+                ASSET_ID=$(gh api "repos/$REPO_NAME/releases/$RELEASE_ID/assets" --jq '.[] | select(.name == "discord-message-id.txt") | .id' 2>/dev/null || true)
+                if [ -n "$ASSET_ID" ]; then
+                  gh api -X DELETE "repos/$REPO_NAME/releases/$RELEASE_ID/assets/$ASSET_ID" 2>/dev/null || true
+                fi
+              fi
+              
+              # Upload new message ID as release asset
+              echo "$NEW_MSG_ID" > discord-message-id.txt
+              gh release upload "$RELEASE_TAG" discord-message-id.txt --repo "$REPO_NAME" --clobber
+            fi
+          fi
