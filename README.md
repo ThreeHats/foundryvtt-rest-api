@@ -1,36 +1,97 @@
-### How to use Foundry REST API:
+# Foundry REST API Module
 
-- Install the Founndry VTT module using the latest manifest link: [https://github.com/ThreeHats/foundryvtt-rest-api/releases/latest/download/module.json](https://github.com/ThreeHats/foundryvtt-rest-api/releases/latest/download/module.json)
-    
-- Get an API key for the public relay server at [https://foundryvtt-rest-api-relay.fly.dev/](https://foundryvtt-rest-api-relay.fly.dev/)
-    
-- Download [Postman](https://www.postman.com/downloads/) and the import the latest [API Test Collection](https://github.com/ThreeHats/foundryvtt-rest-api-relay/blob/main/Foundry%20REST%20API%20Documentation.postman_collection.json) for an easy way to start testing endpoints.
-    
-- Read the [documentation](https://github.com/ThreeHats/foundryvtt-rest-api-relay/wiki) for information about how to use each endpoint
+**The Foundry VTT companion module** for the [Foundry REST API](https://github.com/ThreeHats/foundryvtt-rest-api-relay) — connects your Foundry world to a relay server, enabling external tools and automations to interact with your game.
 
-- Join the [discord](https://discord.gg/U634xNGRAC) server for updates, questions, and discussions
-    
+[![Discord](https://img.shields.io/discord/1234567890?label=Discord&logo=discord&logoColor=white)](https://discord.gg/U634xNGRAC)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
 
-Foundry REST API provides various API endpoints for fetching and interacting with your foundry world data through a node.js server that act as a relay.
+## What Is This?
 
-## **Getting started guide**
+This module bridges your Foundry VTT world to a relay server via WebSocket, allowing external applications to read and modify your world data through a REST API.
 
-To start using the Foundry REST API, you need to -
-    
-- Have your API key in the module settings.
-    
-- Each request must have the your API key in the "x-api-key" header.
-    
-- Endpoints other than /clients require a clientId parameter that matches a connected world.
+```
+┌─────────────────┐      WebSocket       ┌─────────────────┐      REST API      ┌─────────────────┐
+│   Foundry VTT   │ ◄──────────────────► │  Relay Server   │ ◄────────────────► │  Your App/Tool  │
+│   + This Module │                      │                 │                    │                 │
+└─────────────────┘                      └─────────────────┘                    └─────────────────┘
+```
 
-### Configuration
-After installing the module, go to the module settings to configure:
+**Use cases:** Custom dashboards, MIDI controller integration, Discord bots, Stream Deck triggers, automated testing, and more.
 
-- **WebSocket Relay URL**: URL for the WebSocket relay server (default: `wss://foundryvtt-rest-api-relay.fly.dev/`).
-- **API Key**: Your unique API key obtained from the relay server provider (or set your own if self-hosting).
-- **Log Level**: Controls the verbosity of module logs.
-- **Ping Interval (seconds)**: How often the module sends application-level pings to the relay server to signal activity (default: `30`).
-- **Max Reconnect Attempts**: Maximum number of times the module will try to reconnect if the connection drops (default: `20`).
-- **Reconnect Base Delay (ms)**: Initial delay before the first reconnect attempt. Uses exponential backoff (default: `1000`).
+---
+
+## Quick Start
+
+### 1. Install the Module
+
+Add this manifest URL in Foundry VTT (Settings → Add-on Modules → Install Module):
+
+```
+https://github.com/ThreeHats/foundryvtt-rest-api/releases/latest/download/module.json
+```
+
+### 2. Get an API Key
+
+**Option A: Public Relay (Easiest)**  
+Go to **[https://foundryvtt-rest-api-relay.fly.dev](https://foundryvtt-rest-api-relay.fly.dev)**, create an account, and copy your API key.
+
+**Option B: Self-Host**  
+See the [relay server documentation](https://github.com/ThreeHats/foundryvtt-rest-api-relay) to run your own instance.
+
+### 3. Configure the Module
+
+Enable the module in your world, then go to **Module Settings** and enter:
+- Your **API Key**
+- The **WebSocket Relay URL** (default: `wss://foundryvtt-rest-api-relay.fly.dev/`)
+
+### 4. Start Making API Calls
+
+```bash
+# List connected worlds
+curl -X GET "https://foundryvtt-rest-api-relay.fly.dev/clients" \
+  -H "x-api-key: YOUR_API_KEY"
+```
+
+---
+
+## Module Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **WebSocket Relay URL** | `wss://foundryvtt-rest-api-relay.fly.dev/` | Relay server WebSocket endpoint |
+| **API Key** | — | Your API key from the relay server |
+| **Log Level** | `info` | Controls module log verbosity (`debug`, `info`, `warn`, `error`) |
+| **Ping Interval** | `30` seconds | Keep-alive ping frequency |
+| **Max Reconnect Attempts** | `20` | Reconnection attempts on disconnect |
+| **Reconnect Base Delay** | `1000` ms | Initial delay before reconnecting (exponential backoff) |
+---
+
+## Project Ecosystem
+
+| Component | Description |
+|-----------|-------------|
+| [**This Module**](https://github.com/ThreeHats/foundryvtt-rest-api) | Foundry VTT module (you are here) |
+| [**Relay Server**](https://github.com/ThreeHats/foundryvtt-rest-api-relay) | Node.js server with REST API and WebSocket relay |
+
+---
+
+## Tech Stack
+
+- **TypeScript** module for Foundry VTT
+- **WebSocket** communication with automatic reconnection
+
+---
+
+## Links
+
+- 📖 [API Documentation](https://foundryvtt-rest-api-relay.fly.dev/docs)
+- 💬 [Discord Community](https://discord.gg/U634xNGRAC)
+- 🖥️ [Relay Server Repository](https://github.com/ThreeHats/foundryvtt-rest-api-relay)
+
+---
+
+## License
+
+MIT © [ThreeHats](https://github.com/ThreeHats)
