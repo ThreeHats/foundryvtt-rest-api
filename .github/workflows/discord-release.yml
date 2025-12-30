@@ -7,6 +7,8 @@ on:
 jobs:
   notify:
     runs-on: ubuntu-latest
+    # Skip if edit was just an asset change (like uploading discord-message-id.txt)
+    if: github.event.action == 'published' || (github.event.action == 'edited' && github.event.changes.body != null)
     steps:
       - name: Send or Update Discord Notification
         env:
@@ -21,23 +23,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ACTION_TYPE: ${{ github.event.action }}
         run: |
-          # Escape the release body for JSON
-          ESCAPED_BODY=$(echo "$RELEASE_BODY" | jq -Rs '.')
-          ESCAPED_BODY=${ESCAPED_BODY:1:-1}
-
-          # Build the Discord message payload (no role ping on edits)
+          # Build the Discord message payload using jq for proper JSON encoding
           if [ "$ACTION_TYPE" = "published" ]; then
             CONTENT=$(jq -n \
               --arg role "$DISCORD_ROLE_ID" \
               --arg title "$RELEASE_TAG - $RELEASE_NAME" \
               --arg url "$RELEASE_URL" \
-              --arg desc "$ESCAPED_BODY" \
+              --arg desc "$RELEASE_BODY" \
               --arg repo "$REPO_NAME" \
               --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               '{
                 content: "<@&\($role)>",
                 embeds: [{
-                  title: "🚀 \($title)",
+                  title: $title,
                   url: $url,
                   description: $desc,
                   color: 5814783,
@@ -48,14 +46,14 @@ jobs:
           else
             # No ping on edit, just update the embed
             CONTENT=$(jq -n \
-              --arg title "$RELEASE_TAG - $RELEASE_NAME" \
+              --arg title "$RELEASE_TAG - $RELEASE_NAME (updated)" \
               --arg url "$RELEASE_URL" \
-              --arg desc "$ESCAPED_BODY" \
+              --arg desc "$RELEASE_BODY" \
               --arg repo "$REPO_NAME" \
               --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               '{
                 embeds: [{
-                  title: "🚀 \($title) (updated)",
+                  title: $title,
                   url: $url,
                   description: $desc,
                   color: 5814783,
