@@ -1,0 +1,52 @@
+name: Discord Release Notification
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Discord Notification
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          REPO_NAME: ${{ github.repository }}
+        run: |
+          # Build the Discord message
+          CONTENT=$(cat <<'EOF'
+          {
+            "embeds": [{
+              "title": "🚀 RELEASE_NAME_PLACEHOLDER",
+              "url": "RELEASE_URL_PLACEHOLDER",
+              "description": "RELEASE_BODY_PLACEHOLDER",
+              "color": 5814783,
+              "footer": {
+                "text": "REPO_NAME_PLACEHOLDER"
+              },
+              "timestamp": "TIMESTAMP_PLACEHOLDER"
+            }]
+          }
+          EOF
+          )
+
+          # Escape the release body for JSON
+          ESCAPED_BODY=$(echo "$RELEASE_BODY" | jq -Rs '.')
+          # Remove surrounding quotes from jq output
+          ESCAPED_BODY=${ESCAPED_BODY:1:-1}
+
+          # Replace placeholders
+          CONTENT=$(echo "$CONTENT" | sed "s|RELEASE_NAME_PLACEHOLDER|$RELEASE_TAG - $RELEASE_NAME|g")
+          CONTENT=$(echo "$CONTENT" | sed "s|RELEASE_URL_PLACEHOLDER|$RELEASE_URL|g")
+          CONTENT=$(echo "$CONTENT" | sed "s|RELEASE_BODY_PLACEHOLDER|$ESCAPED_BODY|g")
+          CONTENT=$(echo "$CONTENT" | sed "s|REPO_NAME_PLACEHOLDER|$REPO_NAME|g")
+          CONTENT=$(echo "$CONTENT" | sed "s|TIMESTAMP_PLACEHOLDER|$(date -u +%Y-%m-%dT%H:%M:%SZ)|g")
+
+          # Send to Discord
+          curl -H "Content-Type: application/json" \
+               -d "$CONTENT" \
+               "$DISCORD_WEBHOOK"
