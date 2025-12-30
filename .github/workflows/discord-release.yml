@@ -11,6 +11,7 @@ jobs:
       - name: Send Discord Notification
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          DISCORD_ROLE_ID: "1359958202208354365"  # Role to ping on release
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_NAME: ${{ github.event.release.name }}
           RELEASE_URL: ${{ github.event.release.html_url }}
@@ -20,6 +21,7 @@ jobs:
           # Build the Discord message
           CONTENT=$(cat <<'EOF'
           {
+            "content": "<@&ROLE_ID_PLACEHOLDER>",
             "embeds": [{
               "title": "🚀 RELEASE_NAME_PLACEHOLDER",
               "url": "RELEASE_URL_PLACEHOLDER",
@@ -40,6 +42,7 @@ jobs:
           ESCAPED_BODY=${ESCAPED_BODY:1:-1}
 
           # Replace placeholders
+          CONTENT=$(echo "$CONTENT" | sed "s|ROLE_ID_PLACEHOLDER|$DISCORD_ROLE_ID|g")
           CONTENT=$(echo "$CONTENT" | sed "s|RELEASE_NAME_PLACEHOLDER|$RELEASE_TAG - $RELEASE_NAME|g")
           CONTENT=$(echo "$CONTENT" | sed "s|RELEASE_URL_PLACEHOLDER|$RELEASE_URL|g")
           CONTENT=$(echo "$CONTENT" | sed "s|RELEASE_BODY_PLACEHOLDER|$ESCAPED_BODY|g")
