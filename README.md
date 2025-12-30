@@ -2,7 +2,7 @@
 
 **The Foundry VTT companion module** for the [Foundry REST API](https://github.com/ThreeHats/foundryvtt-rest-api-relay) — connects your Foundry world to a relay server, enabling external tools and automations to interact with your game.
 
-[![Discord](https://img.shields.io/discord/1234567890?label=Discord&logo=discord&logoColor=white)](https://discord.gg/U634xNGRAC)
+[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/U634xNGRAC)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
