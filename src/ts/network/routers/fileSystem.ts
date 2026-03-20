@@ -1,5 +1,14 @@
 import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
+import { resolveRequestUser, assertUserCan } from "../../utils/permissions";
+
+/**
+ * Get the FilePicker implementation, compatible with both v12 (global) and v13 (namespaced).
+ */
+function getFilePicker(): any {
+  return (foundry as any).applications?.apps?.FilePicker?.implementation  // v13
+    ?? (FilePicker as any);                                               // v12
+}
 
 export const router = new Router("fileSystemRouter");
 
@@ -10,11 +19,18 @@ router.addRoute({
     ModuleLogger.info(`Received get file system request:`, data);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "file-system-result");
+      if (shouldReturn) return;
+
+      if (user) {
+        assertUserCan(user, "FILES_BROWSE", "browse the file system");
+      }
+
       const path = data.path || "";
       const source = data.source || "data";
       const recursive = !!data.recursive;
 
-      const result = await FilePicker.browse(source, path);
+      const result = await getFilePicker().browse(source, path);
 
       const dirs = Array.isArray(result.dirs) ? result.dirs.map((dir: string) => ({
         name: dir.split('/').pop() || dir,
@@ -32,7 +48,7 @@ router.addRoute({
       if (recursive && dirs.length > 0) {
         for (const dir of dirs) {
           try {
-            const subResult = await FilePicker.browse(source, dir.path);
+            const subResult = await getFilePicker().browse(source, dir.path);
 
             const subDirs = Array.isArray(subResult.dirs) ? subResult.dirs.map((subdir: string) => ({
               name: subdir.split('/').pop() || subdir,
@@ -51,7 +67,7 @@ router.addRoute({
             if (recursive === true && subDirs.length > 0 && dir.path.split('/').length < 3) {
               for (const subDir of subDirs) {
                 try {
-                  const deepResult = await FilePicker.browse(source, subDir.path);
+                  const deepResult = await getFilePicker().browse(source, subDir.path);
 
                   const deepDirs = Array.isArray(deepResult.dirs) ? deepResult.dirs.map((deepdir: string) => ({
                     name: deepdir.split('/').pop() || deepdir,
@@ -110,6 +126,13 @@ router.addRoute({
     ModuleLogger.info(`Received upload file request:`, data);
 
     try {
+      const { user: uploadUser, shouldReturn: uploadShouldReturn } = resolveRequestUser(data, socketManager, "upload-file-result");
+      if (uploadShouldReturn) return;
+
+      if (uploadUser) {
+        assertUserCan(uploadUser, "FILES_UPLOAD", "upload files");
+      }
+
       const { path, filename, source, fileData, mimeType, binaryData, overwrite } = data;
 
       if (!path || !filename) {
@@ -169,7 +192,7 @@ router.addRoute({
           for (const directory of directories) {
             currentPath = currentPath ? `${currentPath}/${directory}` : directory;
             try {
-              await FilePicker.createDirectory(uploadSource, currentPath);
+              await getFilePicker().createDirectory(uploadSource, currentPath);
               ModuleLogger.info(`Created/verified directory: ${currentPath}`);
             } catch (createDirError) {
               const errorMessage = (createDirError as any).message || String(createDirError);
@@ -189,7 +212,7 @@ router.addRoute({
       let existingFile = null;
       try {
         const filePath = path && path !== '/' ? `${path}/${filename}` : filename;
-        existingFile = await FilePicker.browse(uploadSource, filePath);
+        existingFile = await getFilePicker().browse(uploadSource, filePath);
       } catch (e) {
         // File does not exist, which is fine
       }
@@ -198,16 +221,25 @@ router.addRoute({
         throw new Error("File already exists. Set overwrite to true to replace it.");
       }
 
-      // Upload the file
-      const result = await FilePicker.upload(uploadSource, path, file);
-      
-      // Validate the upload result
-      if (!result) {
-        throw new Error("FilePicker.upload returned null/undefined result");
+      // Upload the file using direct fetch to avoid FilePicker.upload() promise issues
+      const formData = new FormData();
+      formData.append("source", uploadSource);
+      formData.append("target", path);
+      formData.append("upload", file);
+
+      const uploadResponse = await fetch(foundry.utils.getRoute("upload"), {
+        method: "POST",
+        body: formData
+      });
+
+      if (!uploadResponse.ok) {
+        const errorBody = await uploadResponse.text();
+        throw new Error(`Upload failed (${uploadResponse.status}): ${errorBody}`);
       }
-      
-      const uploadedPath = result && typeof result === 'object' && 'path' in result ? result.path : `${path}/${filename}`;
-      
+
+      const result = await uploadResponse.json();
+      const uploadedPath = result?.path || `${path}/${filename}`;
+
       ModuleLogger.info(`File uploaded successfully: ${uploadedPath}`);
       
       socketManager?.send({
@@ -235,6 +267,13 @@ router.addRoute({
     ModuleLogger.info(`Received download file request:`, data);
 
     try {
+      const { user: downloadUser, shouldReturn: downloadShouldReturn } = resolveRequestUser(data, socketManager, "download-file-result");
+      if (downloadShouldReturn) return;
+
+      if (downloadUser) {
+        assertUserCan(downloadUser, "FILES_BROWSE", "download files");
+      }
+
       const { path } = data;
 
       if (!path) {

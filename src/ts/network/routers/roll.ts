@@ -1,6 +1,7 @@
 import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
 import { recentRolls } from "../../constants";
+import { resolveRequestUser } from "../../utils/permissions";
 
 export const router = new Router("rollRouter");
 
@@ -9,6 +10,10 @@ router.addRoute({
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received request for roll data`);
+
+    // Validate userId if provided (rolls are accessible to all, but validate the user exists)
+    const { shouldReturn } = resolveRequestUser(data, socketManager, "rolls-result");
+    if (shouldReturn) return;
 
     socketManager?.send({
       type: "rolls-result",
@@ -24,6 +29,9 @@ router.addRoute({
     const socketManager = context?.socketManager;
     ModuleLogger.info(`Received request for last roll data`);
 
+    const { shouldReturn } = resolveRequestUser(data, socketManager, "last-roll-result");
+    if (shouldReturn) return;
+
     socketManager?.send({
       type: "last-roll-result",
       requestId: data.requestId,
@@ -37,6 +45,10 @@ router.addRoute({
   handler: async (data, context) => {
     const socketManager = context?.socketManager;
     try {
+      // Validate userId if provided (rolls are accessible to all, but validate the user exists)
+      const { shouldReturn } = resolveRequestUser(data, socketManager, "roll-result");
+      if (shouldReturn) return;
+
       const { formula, flavor, createChatMessage, speaker, whisper, requestId } = data;
 
       let rollResult;

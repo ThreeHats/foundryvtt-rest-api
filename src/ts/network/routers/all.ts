@@ -10,6 +10,9 @@ import {router as MacroRouter} from "./macro"
 import {router as UtilityRouter} from "./utility"
 import {router as FileSystemRouter} from "./fileSystem"
 import {router as Dnd5eRouter} from "./dnd5e"
+import {router as SceneRouter} from "./scene"
+import {router as CanvasRouter} from "./canvas"
+import {router as ChatRouter} from "./chat"
 
 export const routers: Router[] = [
     PingPongRouter,
@@ -22,5 +25,8 @@ export const routers: Router[] = [
     MacroRouter,
     UtilityRouter,
     FileSystemRouter,
-    Dnd5eRouter
+    Dnd5eRouter,
+    SceneRouter,
+    CanvasRouter,
+    ChatRouter
 ]

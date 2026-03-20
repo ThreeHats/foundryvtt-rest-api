@@ -1,6 +1,7 @@
 import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
 import { getFoundryVersionMajor } from "../../utils/version";
+import { resolveRequestUser, hasPermission } from "../../utils/permissions";
 
 export const router = new Router("sheetRouter");
 
@@ -21,6 +22,9 @@ router.addRoute({
     }
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "get-sheet-response");
+      if (shouldReturn) return;
+
       let actor: Actor | TokenDocument | null = null;
       if (data.uuid) {
         actor = await fromUuid(data.uuid) as Actor;
@@ -32,6 +36,18 @@ router.addRoute({
           } else {
             actor = controlledTokens[0].document;
           }
+        }
+      }
+
+      // Check at least OBSERVER permission for sheet rendering
+      if (user && actor) {
+        if (!hasPermission(actor, user, "OBSERVER")) {
+          socketManager?.send({
+            type: "get-sheet-response",
+            requestId: data.requestId,
+            data: { error: `User '${user.name}' does not have permission to view this sheet`, uuid: data.uuid }
+          });
+          return;
         }
       }
 

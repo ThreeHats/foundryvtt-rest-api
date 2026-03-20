@@ -1,5 +1,6 @@
 import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
+import { resolveRequestUser, assertGM, assertWritePermission } from "../../utils/permissions";
 
 export const router = new Router("encounterRouter");
 
@@ -10,23 +11,41 @@ router.addRoute({
     ModuleLogger.info(`Received request for encounters`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "encounters-result");
+      if (shouldReturn) return;
+
       const encounters = game.combats?.contents.map(combat => {
+        let combatants = combat.combatants.contents.map(c => ({
+          id: c.id,
+          name: c.name,
+          tokenUuid: c.token?.uuid,
+          actorUuid: c.actor?.uuid,
+          img: c.img,
+          initiative: c.initiative,
+          hidden: c.hidden,
+          defeated: c.isDefeated
+        }));
+
+        // Filter hidden combatants for non-GM users
+        if (user && !user.isGM) {
+          combatants = combatants.filter(c => {
+            if (!c.hidden) return true;
+            // Show hidden combatants only if user owns the actor
+            if (c.actorUuid) {
+              const actor = game.actors?.find(a => a.uuid === c.actorUuid);
+              return actor && actor.testUserPermission(user, 3); // OWNER level
+            }
+            return false;
+          });
+        }
+
         return {
           id: combat.id,
           name: combat.name,
           round: combat.round,
           turn: combat.turn,
           current: combat.id === game.combat?.id,
-          combatants: combat.combatants.contents.map(c => ({
-            id: c.id,
-            name: c.name,
-            tokenUuid: c.token?.uuid,
-            actorUuid: c.actor?.uuid,
-            img: c.img,
-            initiative: c.initiative,
-            hidden: c.hidden,
-            defeated: c.isDefeated
-          }))
+          combatants
         };
       }) || [];
 
@@ -54,6 +73,13 @@ router.addRoute({
     ModuleLogger.info(`Received request to start encounter with options:`, data);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "start-encounter-result");
+      if (shouldReturn) return;
+
+      if (user) {
+        assertGM(user, "start encounters");
+      }
+
       const combat = await Combat.create({ name: data.name || "New Encounter" });
 
       if (combat) {
@@ -168,6 +194,13 @@ router.addRoute({
     ModuleLogger.info(`Received request for next turn in encounter: ${data.encounterId || 'active'}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "next-turn-result");
+      if (shouldReturn) return;
+
+      if (user) {
+        assertGM(user, "advance encounter turns");
+      }
+
       const combat = data.encounterId ? game.combats?.get(data.encounterId) : game.combat;
 
       if (!combat) {
@@ -210,6 +243,13 @@ router.addRoute({
     ModuleLogger.info(`Received request for next round in encounter: ${data.encounterId || 'active'}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "next-round-result");
+      if (shouldReturn) return;
+
+      if (user) {
+        assertGM(user, "advance encounter rounds");
+      }
+
       const combat = data.encounterId ? game.combats?.get(data.encounterId) : game.combat;
 
       if (!combat) {
@@ -252,6 +292,13 @@ router.addRoute({
     ModuleLogger.info(`Received request for previous turn in encounter: ${data.encounterId || 'active'}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "last-turn-result");
+      if (shouldReturn) return;
+
+      if (user) {
+        assertGM(user, "revert encounter turns");
+      }
+
       const combat = data.encounterId ? game.combats?.get(data.encounterId) : game.combat;
 
       if (!combat) {
@@ -294,6 +341,13 @@ router.addRoute({
     ModuleLogger.info(`Received request for previous round in encounter: ${data.encounterId || 'active'}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "last-round-result");
+      if (shouldReturn) return;
+
+      if (user) {
+        assertGM(user, "revert encounter rounds");
+      }
+
       const combat = data.encounterId ? game.combats?.get(data.encounterId) : game.combat;
 
       if (!combat) {
@@ -336,6 +390,13 @@ router.addRoute({
     ModuleLogger.info(`Received request to end encounter: ${data.encounterId}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "end-encounter-result");
+      if (shouldReturn) return;
+
+      if (user) {
+        assertGM(user, "end encounters");
+      }
+
       let encounterId = data.encounterId;
       if (!encounterId) {
         encounterId = game.combat?.id;
@@ -373,6 +434,9 @@ router.addRoute({
     ModuleLogger.info(`Received add-to-encounter request for encounter: ${data.encounterId}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "add-to-encounter-result");
+      if (shouldReturn) return;
+
       const combat = data.encounterId ? game.combats?.get(data.encounterId) : game.combat;
 
       if (!combat) {
@@ -390,6 +454,11 @@ router.addRoute({
             if (!entity) {
               failedEntities.push({ uuid, reason: "Entity not found" });
               continue;
+            }
+
+            // Check OWNER permission on the token/actor if userId provided
+            if (user) {
+              assertWritePermission(entity, user, "add to encounter");
             }
 
             if (entity.documentName === "Token") {
@@ -433,6 +502,10 @@ router.addRoute({
 
         for (const token of selectedTokens) {
           try {
+            if (user) {
+              assertWritePermission(token.document, user, "add to encounter");
+            }
+
             if (!combat.combatants.find(c => c.token?.id === token.id && c.combat?.scene?.id === token.scene.id)) {
               const combatantData = {
                 tokenId: token.id,
@@ -477,6 +550,9 @@ router.addRoute({
     ModuleLogger.info(`Received remove-from-encounter request for encounter: ${data.encounterId}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "remove-from-encounter-result");
+      if (shouldReturn) return;
+
       const combat = data.encounterId ? game.combats?.get(data.encounterId) : game.combat;
 
       if (!combat) {
@@ -495,6 +571,11 @@ router.addRoute({
             if (!entity) {
               failedEntities.push({ uuid, reason: "Entity not found" });
               continue;
+            }
+
+            // Check OWNER permission if userId provided
+            if (user) {
+              assertWritePermission(entity, user, "remove from encounter");
             }
 
             let foundCombatant = false;
@@ -532,6 +613,15 @@ router.addRoute({
         const selectedTokens = canvas?.tokens?.controlled || [];
 
         for (const token of selectedTokens) {
+          if (user) {
+            try {
+              assertWritePermission(token.document, user, "remove from encounter");
+            } catch (err) {
+              failedEntities.push({ uuid: token.document.uuid, reason: (err as Error).message });
+              continue;
+            }
+          }
+
           const combatant = combat.combatants.find(c =>
             (c as any).tokenId === token.id && (c as any).sceneId === token.scene.id
           );

@@ -224,18 +224,18 @@ Hooks.once("ready", () => {
 
 Hooks.on("createChatMessage", (message: any) => {
   if (message.isRoll && message.rolls?.length > 0) {
-    ModuleLogger.info(`Detected dice roll from ${message.user?.name || 'unknown'}`);
-    
+    ModuleLogger.info(`Detected dice roll from ${message.author?.name || 'unknown'}`);
+
     // Generate a unique ID using the message ID to prevent duplicates
     const rollId = message.id;
-    
+
     // Format roll data
     const rollData = {
       id: rollId,
       messageId: message.id,
       user: {
-        id: message.user?.id,
-        name: message.user?.name
+        id: message.author?.id,
+        name: message.author?.name
       },
       speaker: message.speaker,
       flavor: message.flavor || "",
@@ -277,4 +277,78 @@ Hooks.on("createChatMessage", (message: any) => {
       });
     }
   }
+
+  // Forward all chat messages as chat-event for SSE subscribers
+  const chatModule = game.modules.get(moduleId) as FoundryRestApi;
+  if (chatModule.socketManager?.isConnected()) {
+    chatModule.socketManager.send({
+      type: "chat-event",
+      data: {
+        eventType: "create",
+        data: serializeChatMessageForEvent(message)
+      }
+    });
+  }
 });
+
+Hooks.on("deleteChatMessage", (message: any) => {
+  const module = game.modules.get(moduleId) as FoundryRestApi;
+  if (module.socketManager?.isConnected()) {
+    module.socketManager.send({
+      type: "chat-event",
+      data: {
+        eventType: "delete",
+        data: { id: message.id }
+      }
+    });
+  }
+});
+
+Hooks.on("updateChatMessage", (message: any) => {
+  const module = game.modules.get(moduleId) as FoundryRestApi;
+  if (module.socketManager?.isConnected()) {
+    module.socketManager.send({
+      type: "chat-event",
+      data: {
+        eventType: "update",
+        data: serializeChatMessageForEvent(message)
+      }
+    });
+  }
+});
+
+/**
+ * Serialize a chat message for SSE events.
+ * Includes full roll details (dice, critical/fumble, individual results).
+ */
+function serializeChatMessageForEvent(message: any): any {
+  return {
+    id: message.id,
+    uuid: message.uuid,
+    content: message.content,
+    speaker: message.speaker,
+    timestamp: message.timestamp,
+    whisper: message.whisper || [],
+    type: message.type,
+    author: message.author ? {
+      id: message.author.id,
+      name: message.author.name
+    } : null,
+    flavor: message.flavor || "",
+    isRoll: message.isRoll || false,
+    rolls: message.rolls?.map((r: any) => ({
+      formula: r.formula,
+      total: r.total,
+      isCritical: r.isCritical || false,
+      isFumble: r.isFumble || false,
+      dice: r.dice?.map((d: any) => ({
+        faces: d.faces,
+        results: d.results?.map((res: any) => ({
+          result: res.result,
+          active: res.active
+        })) || []
+      })) || []
+    })) || [],
+    flags: message.flags || {}
+  };
+}

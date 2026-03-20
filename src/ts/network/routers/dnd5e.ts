@@ -1,5 +1,6 @@
 import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
+import { resolveRequestUser, serializeWithPermission, assertWritePermission } from "../../utils/permissions";
 
 export const router = new Router("dnd5eRouter");
 
@@ -15,6 +16,9 @@ Hooks.once('init', () => {
                 ModuleLogger.info(`Received get-actor-details request:`, data);
 
                 try {
+                    const { user, shouldReturn } = resolveRequestUser(data, socketManager, "get-actor-details-result");
+                    if (shouldReturn) return;
+
                     const { actorUuid, details } = data;
                     if (!actorUuid) throw new Error("actorUuid is required");
                     if (!details || !Array.isArray(details) || details.length === 0) {
@@ -23,6 +27,14 @@ Hooks.once('init', () => {
 
                     const actor: any = await fromUuid(actorUuid);
                     if (!actor) throw new Error(`Actor not found with UUID: ${actorUuid}`);
+
+                    // If userId provided, use permission-aware serialization
+                    if (user) {
+                        const serialized = serializeWithPermission(actor, user);
+                        if (!serialized) {
+                            throw new Error(`User '${user.name}' does not have permission to view actor '${actor.name}'`);
+                        }
+                    }
 
                     const results: any = { uuid: actorUuid };
 
@@ -67,6 +79,9 @@ Hooks.once('init', () => {
                 ModuleLogger.info(`Received modify-item-charges request:`, data);
 
                 try {
+                    const { user, shouldReturn } = resolveRequestUser(data, socketManager, "modify-item-charges-result");
+                    if (shouldReturn) return;
+
                     const { actorUuid, itemUuid, itemName, amount } = data;
                     if (!actorUuid) throw new Error("actorUuid is required");
                     if (!itemUuid && !itemName) throw new Error("itemUuid or itemName is required");
@@ -74,6 +89,10 @@ Hooks.once('init', () => {
 
                     const actor: any = await fromUuid(actorUuid);
                     if (!actor) throw new Error(`Actor not found with UUID: ${actorUuid}`);
+
+                    if (user) {
+                        assertWritePermission(actor, user, "modify item charges on");
+                    }
 
                     let item: any = null;
                     if (itemUuid) {
@@ -104,7 +123,7 @@ Hooks.once('init', () => {
                             }
                         }
                     };
-                    
+
                     await item.update(updatePayload);
 
                     socketManager?.send({
@@ -129,18 +148,24 @@ Hooks.once('init', () => {
         });
 
         // Use an item, spell, or feature for an actor
-        const useAbilityHandler = async (data: any, context: any, abilityType: string | null) => {
+        const useAbilityHandler = async (data: any, context: any, abilityType: string | null, actionType: string) => {
             const socketManager = context?.socketManager;
-            const actionType = abilityType ? `use-${abilityType}` : 'use-ability';
             ModuleLogger.info(`Received ${actionType} request:`, data);
 
             try {
+                const { user, shouldReturn } = resolveRequestUser(data, socketManager, `${actionType}-result`);
+                if (shouldReturn) return;
+
                 const { actorUuid, abilityUuid, abilityName, targetUuid } = data;
                 if (!actorUuid) throw new Error("actorUuid is required");
                 if (!abilityUuid && !abilityName) throw new Error("abilityUuid or abilityName is required");
 
                 const actor: any = await fromUuid(actorUuid);
                 if (!actor) throw new Error(`Actor not found with UUID: ${actorUuid}`);
+
+                if (user) {
+                    assertWritePermission(actor, user, `use abilities on`);
+                }
 
                 let ability: any = null;
                 if (abilityUuid) {
@@ -154,10 +179,16 @@ Hooks.once('init', () => {
                         if (!abilityType) return true; // For /use-ability, no type filter
 
                         if (abilityType === 'item') {
-                            return i.type !== 'feat' && i.type !== 'spell';
+                            return i.type !== 'feat' && i.type !== 'spell'
+                                && i.type !== 'class' && i.type !== 'subclass' && i.type !== 'background';
                         }
-                        
-                        return i.type === abilityType; // For /use-feature and /use-spell
+
+                        if (abilityType === 'feat') {
+                            // Match all feature-like types (feat, class, subclass, background)
+                            return ['feat', 'class', 'subclass', 'background'].includes(i.type);
+                        }
+
+                        return i.type === abilityType; // For /use-spell
                     });
                 }
 
@@ -185,8 +216,11 @@ Hooks.once('init', () => {
                         }
                     }
                 }
-                
-                const useResult = await ability.use();
+
+                // Skip configuration dialogs (spell slot selection, etc.)
+                // v12 dnd5e: use(config, { configureDialog: false })
+                // v13 dnd5e: use(usage, { configure: false }, message)
+                const useResult = await ability.use({}, { configure: false, configureDialog: false });
 
                 socketManager?.send({
                     type: `${actionType}-result`,
@@ -210,22 +244,22 @@ Hooks.once('init', () => {
 
         router.addRoute({
             actionType: "use-ability",
-            handler: (data, context) => useAbilityHandler(data, context, null)
+            handler: (data, context) => useAbilityHandler(data, context, null, 'use-ability')
         });
 
         router.addRoute({
             actionType: "use-feature",
-            handler: (data, context) => useAbilityHandler(data, context, 'feat')
+            handler: (data, context) => useAbilityHandler(data, context, 'feat', 'use-feature')
         });
 
         router.addRoute({
             actionType: "use-spell",
-            handler: (data, context) => useAbilityHandler(data, context, 'spell')
+            handler: (data, context) => useAbilityHandler(data, context, 'spell', 'use-spell')
         });
 
         router.addRoute({
             actionType: "use-item",
-            handler: (data, context) => useAbilityHandler(data, context, 'item')
+            handler: (data, context) => useAbilityHandler(data, context, 'item', 'use-item')
         });
 
         // Modify actor experience
@@ -236,6 +270,9 @@ Hooks.once('init', () => {
                 ModuleLogger.info(`Received modify-experience request:`, data);
 
                 try {
+                    const { user, shouldReturn } = resolveRequestUser(data, socketManager, "modify-experience-result");
+                    if (shouldReturn) return;
+
                     const { actorUuid, selected, amount } = data;
                     if (!actorUuid && !selected) throw new Error("Either actorUuid or selected must be provided");
                     if (typeof amount !== 'number') throw new Error("amount must be a number");
@@ -255,6 +292,10 @@ Hooks.once('init', () => {
                     }
 
                     if (!actor) throw new Error(`Actor not found`);
+
+                    if (user) {
+                        assertWritePermission(actor, user, "modify experience on");
+                    }
 
                     const currentXp = actor.system.details.xp.value;
                     const newXp = currentXp + amount;

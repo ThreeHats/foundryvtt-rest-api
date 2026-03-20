@@ -1,5 +1,6 @@
 import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
+import { resolveRequestUser, hasPermission, assertWritePermission } from "../../utils/permissions";
 
 export const router = new Router("macroRouter");
 
@@ -10,7 +11,10 @@ router.addRoute({
     ModuleLogger.info(`Received request for macros`);
 
     try {
-      const macros = game.macros?.contents.map(macro => {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "macros-result");
+      if (shouldReturn) return;
+
+      let macros = game.macros?.contents.map(macro => {
         return {
           uuid: macro.uuid,
           id: macro.id,
@@ -23,6 +27,14 @@ router.addRoute({
           canExecute: (macro as any).canExecute
         };
       }) || [];
+
+      // Filter by permission if userId provided
+      if (user) {
+        macros = macros.filter(macroData => {
+          const macro = game.macros?.get(macroData.id);
+          return macro && hasPermission(macro, user, "LIMITED");
+        });
+      }
 
       socketManager?.send({
         type: "macros-result",
@@ -48,6 +60,9 @@ router.addRoute({
     ModuleLogger.info(`Received request to execute macro: ${data.uuid}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "macro-execute-result");
+      if (shouldReturn) return;
+
       if (!data.uuid) {
         throw new Error("Macro UUID is required");
       }
@@ -59,6 +74,10 @@ router.addRoute({
 
       if (!(macro instanceof CONFIG.Macro.documentClass)) {
         throw new Error(`Entity with UUID ${data.uuid} is not a macro`);
+      }
+
+      if (user) {
+        assertWritePermission(macro, user, "execute");
       }
 
       if (!macro.canExecute) {

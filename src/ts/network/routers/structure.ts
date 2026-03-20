@@ -1,5 +1,6 @@
 import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
+import { resolveRequestUser, hasPermission, assertGM } from "../../utils/permissions";
 
 export const router = new Router("structureRouter");
 
@@ -10,12 +11,15 @@ router.addRoute({
     ModuleLogger.info(`Received structure request with params:`, data);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "structure-result");
+      if (shouldReturn) return;
+
       // Parse parameters with defaults
       const includeEntityData = data.includeEntityData ?? false;
       const path = data.path || null;
       const recursive = data.recursive ?? false;
       const recursiveDepth = data.recursiveDepth ?? 5;
-      const types = data.type ? (Array.isArray(data.types) ? data.types : [data.types]) : 
+      const types = data.type ? (Array.isArray(data.types) ? data.types : [data.types]) :
         ["Scene", "Actor", "Item", "JournalEntry", "RollTable", "Cards", "Macro", "Playlist"];
 
       // Type mapping for game collections
@@ -30,8 +34,36 @@ router.addRoute({
         "Playlist": game.playlists
       };
 
-      // Helper function to get entity data
+      // Helper function to get entity data, with optional permission filtering
       const getEntityData = (entity: any) => {
+        // If userId filtering is active, check permission
+        if (user) {
+          if (hasPermission(entity, user, "OBSERVER")) {
+            // Full data for OBSERVER+
+            if (includeEntityData) {
+              return entity.toObject(false);
+            } else {
+              return {
+                uuid: entity.uuid,
+                name: entity.name,
+                id: entity.id,
+                type: entity.documentName
+              };
+            }
+          } else if (hasPermission(entity, user, "LIMITED")) {
+            // Limited data only
+            return {
+              uuid: entity.uuid,
+              name: entity.name,
+              id: entity.id,
+              type: entity.documentName,
+              img: entity.img || null
+            };
+          } else {
+            return null; // No permission
+          }
+        }
+
         if (includeEntityData) {
           return entity.toObject(false);
         } else {
@@ -44,6 +76,14 @@ router.addRoute({
         }
       };
 
+      // Helper to get filtered entities (filters out null for no-permission)
+      const getFilteredEntities = (entities: any[]) => {
+        return entities
+          .filter((entity: any) => types.includes(entity.documentName))
+          .map(getEntityData)
+          .filter((e: any) => e !== null);
+      };
+
       // Helper function to build folder structure recursively
       const buildFolderStructure = (parentFolder: any, currentDepth: number = 0): any => {
         if (!recursive || currentDepth >= recursiveDepth) {
@@ -54,7 +94,7 @@ router.addRoute({
         const allFolders = game.folders?.contents || [];
 
         // Get child folders
-        const childFolders = allFolders.filter(f => 
+        const childFolders = allFolders.filter(f =>
           f.folder?.id === parentFolder?.id && types.includes(f.type)
         );
 
@@ -68,9 +108,7 @@ router.addRoute({
           };
 
           // Add entities in this folder
-          const folderEntities = folder.contents
-            .filter((entity: any) => types.includes(entity.documentName))
-            .map(getEntityData);
+          const folderEntities = getFilteredEntities(folder.contents);
 
           if (folderEntities.length > 0) {
             structure[folderKey].entities = folderEntities;
@@ -131,11 +169,9 @@ router.addRoute({
 
         // Build structure starting from this folder
         result.folders = buildFolderStructure(startFolder);
-        
+
         // Add entities in the start folder
-        const folderEntities = startFolder.contents
-          .filter((entity: any) => types.includes(entity.documentName))
-          .map(getEntityData);
+        const folderEntities = getFilteredEntities(startFolder.contents);
 
         if (folderEntities.length > 0) {
           result.entities = folderEntities;
@@ -148,7 +184,7 @@ router.addRoute({
           // Non-recursive: just return folder info without nesting
           const folders = game.folders?.contents || [];
           result.folders = {};
-          
+
           for (const type of types) {
             const typeFolders = folders.filter(f => f.type === type && !f.folder);
             for (const folder of typeFolders) {
@@ -161,9 +197,7 @@ router.addRoute({
 
               // Add entities in folder if requested
               if (includeEntityData || !recursive) {
-                const folderEntities = folder.contents
-                  .filter((entity: any) => types.includes(entity.documentName))
-                  .map(getEntityData);
+                const folderEntities = getFilteredEntities(folder.contents);
 
                 if (folderEntities.length > 0) {
                   result.folders[folderKey].entities = folderEntities;
@@ -178,7 +212,12 @@ router.addRoute({
         for (const type of types) {
           const collection = typeCollectionMap[type as keyof typeof typeCollectionMap];
           if (collection) {
-            const entities = (collection as any).filter((e: any) => !e.folder).map(getEntityData);
+            let entities;
+            if (user) {
+              entities = (collection as any).filter((e: any) => !e.folder).map(getEntityData).filter((e: any) => e !== null);
+            } else {
+              entities = (collection as any).filter((e: any) => !e.folder).map(getEntityData);
+            }
             if (entities.length > 0) {
               rootEntities[type.toLowerCase() + 's'] = entities;
             }
@@ -192,12 +231,12 @@ router.addRoute({
         // Add compendium packs if requested, filtered by types
         if (!path) { // Only show compendiums at root level
           const compendiumPacks: any = {};
-          
+
           for (const pack of game.packs.contents) {
             // Filter compendiums by requested types
             if (types.includes(pack.documentName)) {
               const packKey = pack.title || pack.collection;
-              
+
               compendiumPacks[packKey] = {
                 id: pack.collection,
                 name: pack.title,
@@ -219,7 +258,7 @@ router.addRoute({
                     };
                   }
                 });
-                
+
                 if (entities.length > 0) {
                   compendiumPacks[packKey].entities = entities;
                 }
@@ -259,6 +298,9 @@ router.addRoute({
     ModuleLogger.info(`Received get-folder request for name: ${data.name}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "get-folder-result");
+      if (shouldReturn) return;
+
       const folders = game.folders?.contents || [];
       const folder = folders.find(f => f.name === data.name);
 
@@ -266,14 +308,21 @@ router.addRoute({
         throw new Error(`Folder not found with name: ${data.name}`);
       }
 
-      // Get folder contents
-      const contents = folder.contents.map(entity => ({
+      // Get folder contents, filtered by permission if userId provided
+      let contents = folder.contents.map(entity => ({
         uuid: entity.uuid,
         id: entity.id,
         name: entity.name,
         type: entity.documentName,
         img: 'img' in entity ? entity.img : null
       }));
+
+      if (user) {
+        contents = contents.filter(c => {
+          const doc = folder.contents.find((e: any) => e.id === c.id);
+          return doc && hasPermission(doc, user, "LIMITED");
+        });
+      }
 
       socketManager?.send({
         type: "get-folder-result",
@@ -306,6 +355,13 @@ router.addRoute({
     ModuleLogger.info(`Received create-folder request:`, data);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "create-folder-result");
+      if (shouldReturn) return;
+
+      if (user) {
+        assertGM(user, "create folders");
+      }
+
       const folderData: any = {
         name: data.name,
         type: data.folderType
@@ -351,6 +407,13 @@ router.addRoute({
     ModuleLogger.info(`Received delete-folder request:`, data);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "delete-folder-result");
+      if (shouldReturn) return;
+
+      if (user) {
+        assertGM(user, "delete folders");
+      }
+
       const folder = game.folders?.get(data.folderId);
       if (!folder) {
         throw new Error(`Folder not found with ID: ${data.folderId}`);
@@ -379,7 +442,7 @@ router.addRoute({
         // Count and delete entities in this folder
         const entitiesToDelete = folderToDelete.contents;
         entityCount += entitiesToDelete.length;
-        
+
         for (const entity of entitiesToDelete) {
           await entity.delete();
         }
@@ -390,7 +453,7 @@ router.addRoute({
 
         return { entities: entityCount, folders: folderCount };
       };
-      
+
       if (deleteAll) {
         // Recursively delete the folder and all its contents
         const counts = await recursiveDelete(folder);
@@ -400,11 +463,11 @@ router.addRoute({
         // Check if folder has any contents (entities or child folders) and refuse to delete if it does
         const allFolders = game.folders?.contents || [];
         const childFolders = allFolders.filter(f => f.folder?.id === folder.id);
-        
+
         if (folder.contents.length > 0) {
           throw new Error(`Folder contains ${folder.contents.length} entities. Use deleteAll=true to delete them or move them first.`);
         }
-        
+
         if (childFolders.length > 0) {
           throw new Error(`Folder contains ${childFolders.length} child folders. Use deleteAll=true to delete them or move them first.`);
         }
@@ -443,6 +506,9 @@ router.addRoute({
     ModuleLogger.info(`Received contents request for path: ${data.path}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "contents-result");
+      if (shouldReturn) return;
+
       let contents = [];
 
       if (data.path.startsWith("Compendium.")) {
@@ -477,7 +543,14 @@ router.addRoute({
         }
 
         // Get entities in folder
-        contents = folder.contents.map(entity => {
+        let folderEntities = folder.contents;
+
+        // Filter by permission if userId provided
+        if (user) {
+          folderEntities = folderEntities.filter((entity: any) => hasPermission(entity, user, "LIMITED"));
+        }
+
+        contents = folderEntities.map(entity => {
           return {
             uuid: entity.uuid,
             id: entity.id,

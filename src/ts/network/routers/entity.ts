@@ -1,6 +1,7 @@
 import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
 import { deepSerializeEntity } from "../../utils/serialization";
+import { resolveRequestUser, serializeWithPermission, filterByPermission, assertWritePermission } from "../../utils/permissions";
 
 export const router = new Router("entityRouter");
 
@@ -11,12 +12,16 @@ router.addRoute({
     ModuleLogger.info(`Received entity request:`, data);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "entity-result");
+      if (shouldReturn) return;
+
       let entity;
-      let entityData = [];
+      let entityData: any = [];
       let entityUUID = data.uuid;
       if (data.selected) {
         const controlledTokens = canvas?.tokens?.controlled;
         if (controlledTokens) {
+          const rawEntities = [];
           for (let token of controlledTokens) {
             if (data.actor) {
               entity = token.actor;
@@ -25,18 +30,40 @@ router.addRoute({
             }
             if (entity) {
               entityUUID = entity.uuid;
-              // Use custom deep serialization
-              entityData.push(deepSerializeEntity(entity));
+              rawEntities.push(entity);
             }
+          }
+
+          if (user) {
+            entityData = filterByPermission(rawEntities, user);
+          } else {
+            entityData = rawEntities.map(e => deepSerializeEntity(e));
           }
         }
       } else {
         entity = await fromUuid(data.uuid);
-        // Use custom deep serialization
-        entityData = entity ? deepSerializeEntity(entity) : null;
+        if (entity) {
+          if (user) {
+            entityData = serializeWithPermission(entity, user);
+            if (!entityData) {
+              socketManager?.send({
+                type: "entity-result",
+                requestId: data.requestId,
+                uuid: data.uuid,
+                error: `User '${user.name}' does not have permission to view this entity`,
+                data: null,
+              });
+              return;
+            }
+          } else {
+            entityData = deepSerializeEntity(entity);
+          }
+        } else {
+          entityData = null;
+        }
       }
 
-      if (!entityData) {
+      if (!entityData || (Array.isArray(entityData) && entityData.length === 0 && data.selected)) {
         ModuleLogger.error(`Entity not found: ${data.uuid}`);
         socketManager?.send({
           type: "entity-result",
@@ -77,6 +104,17 @@ router.addRoute({
     ModuleLogger.info(`Received create entity request for type: ${data.entityType}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "create-result");
+      if (shouldReturn) return;
+
+      if (user) {
+        // Check if user has permission to create this document type
+        const createPermission = `${data.entityType.toUpperCase()}_CREATE`;
+        if (!(user as any).can(createPermission) && !user.isGM) {
+          throw new Error(`User '${user.name}' does not have permission to create ${data.entityType} documents`);
+        }
+      }
+
       const DocumentClass = getDocumentClass(data.entityType);
       if (!DocumentClass) {
         throw new Error(`Invalid entity type: ${data.entityType}`);
@@ -119,6 +157,9 @@ router.addRoute({
     ModuleLogger.info(`Received decrease attribute request for attribute: ${data.attribute}, amount: ${data.amount}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "decrease-result");
+      if (shouldReturn) return;
+
       if (!data.uuid && !data.selected) {
         throw new Error("UUID or selected is required");
       }
@@ -144,9 +185,15 @@ router.addRoute({
         throw new Error("No entities found to modify");
       }
 
+      if (user) {
+        for (const entity of entities) {
+          assertWritePermission(entity, user, "decrease attribute on");
+        }
+      }
+
       const results = [];
       for (const entity of entities) {
-        const currentValue = getProperty(entity, data.attribute);
+        const currentValue = foundry.utils.getProperty(entity, data.attribute);
         if (typeof currentValue !== 'number') {
           throw new Error(`Attribute ${data.attribute} is not a number, found: ${typeof currentValue}`);
         }
@@ -191,6 +238,9 @@ router.addRoute({
     ModuleLogger.info(`Received increase attribute request for attribute: ${data.attribute}, amount: ${data.amount}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "increase-result");
+      if (shouldReturn) return;
+
       if (!data.uuid && !data.selected) {
         throw new Error("UUID or selected is required");
       }
@@ -216,9 +266,15 @@ router.addRoute({
         throw new Error("No entities found to modify");
       }
 
+      if (user) {
+        for (const entity of entities) {
+          assertWritePermission(entity, user, "increase attribute on");
+        }
+      }
+
       const results = [];
       for (const entity of entities) {
-        const currentValue = getProperty(entity, data.attribute);
+        const currentValue = foundry.utils.getProperty(entity, data.attribute);
         if (typeof currentValue !== 'number') {
           throw new Error(`Attribute ${data.attribute} is not a number, found: ${typeof currentValue}`);
         }
@@ -263,6 +319,9 @@ router.addRoute({
     ModuleLogger.info(`Received update entity request for UUID: ${data.uuid}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "update-result");
+      if (shouldReturn) return;
+
       let entities = [];
       if (data.uuid) {
         entities.push(await fromUuid(data.uuid));
@@ -281,6 +340,12 @@ router.addRoute({
 
       if (entities.length === 0) {
         throw new Error(`Entity not found: ${data.uuid}`);
+      }
+
+      if (user) {
+        for (const entity of entities) {
+          assertWritePermission(entity, user, "update");
+        }
       }
 
       for (let entity of entities) {
@@ -319,6 +384,9 @@ router.addRoute({
     ModuleLogger.info(`Received delete entity request for UUID: ${data.uuid}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "delete-result");
+      if (shouldReturn) return;
+
       let entities = [];
       if (data.uuid) {
         entities.push(await fromUuid(data.uuid));
@@ -337,6 +405,12 @@ router.addRoute({
 
       if (!entities || entities.length === 0) {
         throw new Error(`Entity not found: ${data.uuid}`);
+      }
+
+      if (user) {
+        for (const entity of entities) {
+          assertWritePermission(entity, user, "delete");
+        }
       }
 
       for (let entity of entities) {
@@ -370,6 +444,9 @@ router.addRoute({
     ModuleLogger.info(`Received kill request for UUID: ${data.uuid}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "kill-result");
+      if (shouldReturn) return;
+
       const entities = [];
 
       if (data.uuid) {
@@ -392,6 +469,12 @@ router.addRoute({
         throw new Error("No entities found to mark as defeated");
       }
 
+      if (user) {
+        for (const entity of entities) {
+          assertWritePermission(entity, user, "kill");
+        }
+      }
+
       const results = [];
 
       for (const entity of entities) {
@@ -408,10 +491,10 @@ router.addRoute({
 
           const combat = game.combat;
           if (combat) {
-            const combatant = combat.combatants.find(c => 
+            const combatant = combat.combatants.find(c =>
               c.token?.id === token.id && c.token?.parent?.id === token.parent?.id
             );
-            
+
             if (combatant) {
               await combatant.update({ defeated: true });
               ModuleLogger.info(`Marked token as defeated in combat`);
@@ -419,16 +502,16 @@ router.addRoute({
           }
 
           try {
-            if (hasProperty(actor, "system.attributes.hp")) {
+            if (foundry.utils.hasProperty(actor, "system.attributes.hp")) {
               await actor.update({ "system.attributes.hp.value": 0 });
-            } 
-            else if (hasProperty(actor, "system.health")) {
+            }
+            else if (foundry.utils.hasProperty(actor, "system.health")) {
               await actor.update({ "system.health.value": 0 });
             }
-            else if (hasProperty(actor, "system.hp")) {
+            else if (foundry.utils.hasProperty(actor, "system.hp")) {
               await actor.update({ "system.hp.value": 0 });
             }
-            else if (hasProperty(actor, "data.attributes.hp")) {
+            else if (foundry.utils.hasProperty(actor, "data.attributes.hp")) {
               await actor.update({ "data.attributes.hp.value": 0 });
             }
             ModuleLogger.info(`Set actor HP to 0`);
@@ -437,10 +520,10 @@ router.addRoute({
           }
 
           try {
-            const deadEffect = CONFIG.statusEffects?.find(e => 
+            const deadEffect = CONFIG.statusEffects?.find(e =>
               e.id === "dead" || e.id === "unconscious" || e.id === "defeated"
             );
-            
+
             if (deadEffect) {
               await (token as any).toggleActiveEffect(deadEffect);
               ModuleLogger.info(`Added ${deadEffect.id} status effect to token`);
@@ -460,13 +543,13 @@ router.addRoute({
           const scenes = game.scenes;
           if (scenes?.viewed) {
             const tokens = scenes.viewed.tokens.filter(t => t.actor?.id === actor.id);
-            
+
             for (const token of tokens) {
               try {
-                const deadEffect = CONFIG.statusEffects?.find(e => 
+                const deadEffect = CONFIG.statusEffects?.find(e =>
                   e.id === "dead" || e.id === "unconscious" || e.id === "defeated"
                 );
-                
+
                 if (deadEffect) {
                   await (token as any).toggleActiveEffect(deadEffect);
                   tokensUpdated++;
@@ -480,7 +563,7 @@ router.addRoute({
           const combat = game.combat;
           if (combat) {
             const combatants = combat.combatants.filter(c => c.actor?.id === actor.id);
-            
+
             if (combatants.length > 0) {
               await Promise.all(combatants.map(c => c.update({ defeated: true })));
               ModuleLogger.info(`Marked ${combatants.length} combatants as defeated`);
@@ -488,16 +571,16 @@ router.addRoute({
           }
 
           try {
-            if (hasProperty(actor, "system.attributes.hp")) {
+            if (foundry.utils.hasProperty(actor, "system.attributes.hp")) {
               await actor.update({ "system.attributes.hp.value": 0 });
-            } 
-            else if (hasProperty(actor, "system.health")) {
+            }
+            else if (foundry.utils.hasProperty(actor, "system.health")) {
               await actor.update({ "system.health.value": 0 });
             }
-            else if (hasProperty(actor, "system.hp")) {
+            else if (foundry.utils.hasProperty(actor, "system.hp")) {
               await actor.update({ "system.hp.value": 0 });
             }
-            else if (hasProperty(actor, "data.attributes.hp")) {
+            else if (foundry.utils.hasProperty(actor, "data.attributes.hp")) {
               await actor.update({ "data.attributes.hp.value": 0 });
             }
             ModuleLogger.info(`Set actor HP to 0`);
@@ -543,6 +626,9 @@ router.addRoute({
     ModuleLogger.info(`Received give item request from ${data.fromUuid} to ${data.toUuid}`);
 
     try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "give-result");
+      if (shouldReturn) return;
+
       if (!data.toUuid && !data.selected) {
         throw new Error("Target UUID or selected is required");
       }
@@ -556,6 +642,9 @@ router.addRoute({
         if (fromEntity?.documentName !== "Actor") {
           throw new Error(`Source entity must be an Actor, got ${fromEntity?.documentName}`);
         }
+        if (user) {
+          assertWritePermission(fromEntity, user, "give items from");
+        }
       }
 
       if (data.selected) {
@@ -565,6 +654,10 @@ router.addRoute({
       if (!toEntity) throw new Error(`Target entity not found: ${data.toUuid}`);
       if (toEntity.documentName !== "Actor") {
         throw new Error(`Target entity must be an Actor, got ${toEntity.documentName}`);
+      }
+
+      if (user) {
+        assertWritePermission(toEntity, user, "give items to");
       }
 
       let itemEntity: any | null = null;
@@ -592,7 +685,7 @@ router.addRoute({
             window.QuickInsert.forceIndex();
             await new Promise(resolve => setTimeout(resolve, 500)); // Give index time to build
           }
-          
+
           const searchResults = await window.QuickInsert.search(data.itemName, null, 20); // Search all documents
           const itemSearchResult = searchResults.find(r => r.item?.documentType === "Item");
 
@@ -621,11 +714,11 @@ router.addRoute({
 
       // Check if a stackable item with the same name already exists on the target actor
       const existingItem = (toEntity as any).items.find((i: any) => i.name === itemData.name);
-      const isStackable = existingItem && hasProperty(existingItem.system, 'quantity');
-      
+      const isStackable = existingItem && foundry.utils.hasProperty(existingItem.system, 'quantity');
+
       // If a source actor is defined, handle removing/updating the item from them first.
       if (itemEntity && fromEntity) {
-        const sourceQuantity = getProperty(itemEntity, 'system.quantity');
+        const sourceQuantity = foundry.utils.getProperty(itemEntity, 'system.quantity');
         if (typeof sourceQuantity === 'number' && amountToGive < sourceQuantity) {
             await itemEntity.update({ "system.quantity": sourceQuantity - amountToGive });
         } else {
@@ -645,7 +738,7 @@ router.addRoute({
       } else {
         // If the item doesn't exist on the target or isn't stackable, create a new one.
         delete itemData._id;
-        if (hasProperty(itemData, 'system.quantity')) {
+        if (foundry.utils.hasProperty(itemData, 'system.quantity')) {
             itemData.system.quantity = amountToGive;
         } else if (itemData.system) { // Handle items that might not have quantity by default
             itemData.system.quantity = amountToGive;
@@ -692,6 +785,9 @@ router.addRoute({
         ModuleLogger.info(`Received remove item request from actor: ${data.actorUuid}`);
 
         try {
+            const { user, shouldReturn } = resolveRequestUser(data, socketManager, "remove-result");
+            if (shouldReturn) return;
+
             if (!data.actorUuid && !data.selected) {
                 throw new Error("Target actor UUID or selected is required");
             }
@@ -708,6 +804,10 @@ router.addRoute({
                 throw new Error(`Target entity must be an Actor, got ${(actor as any).documentName}`);
             }
 
+            if (user) {
+                assertWritePermission(actor, user, "remove items from");
+            }
+
             let itemEntity: any | null = null;
             if (data.itemUuid) {
                 itemEntity = await fromUuid(data.itemUuid);
@@ -718,7 +818,7 @@ router.addRoute({
             if (!itemEntity) throw new Error(`Item not found: ${data.itemUuid || data.itemName}`);
 
             const amountToRemove = data.quantity || null;
-            const currentQuantity = getProperty(itemEntity, 'system.quantity');
+            const currentQuantity = foundry.utils.getProperty(itemEntity, 'system.quantity');
             let finalQuantity = 0;
 
             if (amountToRemove && typeof currentQuantity === 'number' && currentQuantity > amountToRemove) {
