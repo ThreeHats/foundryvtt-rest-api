@@ -378,6 +378,7 @@ export class WebSocketManager {
 
   private onClose(event: CloseEvent): void {
     ModuleLogger.info(`WebSocket disconnected: ${event.code} - ${event.reason}`);
+    const wasConnected = this.connectionState === 'connected';
     this.socket = null;
     this.connectionState = 'disconnected';
 
@@ -387,8 +388,10 @@ export class WebSocketManager {
       this.pingInterval = null;
     }
 
-    // Visible disconnect notifications for any non-normal closure
-    if (event.code !== WSCloseCodes.Normal) {
+    // Only show disconnect notifications when a live connection actually dropped.
+    // Suppress during initial connect/reconnect attempts so a relay that isn't
+    // running doesn't spam the GM with a notification on every retry.
+    if (wasConnected && event.code !== WSCloseCodes.Normal) {
       let relayHost = this.url;
       try { relayHost = new URL(this.url).host; } catch { /* noop */ }
 
