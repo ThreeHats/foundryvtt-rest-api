@@ -22,6 +22,16 @@ export interface FoundryRestApiAPI {
   getWebSocketManager: () => WebSocketManager | null;
   search: (query: string, filter?: string) => Promise<any[]>;
   getByUuid: (uuid: string) => Promise<any>;
+  openConnectionDialog: () => void;
+  // remoteRequest invokes an action on another Foundry world via the relay's
+  // cross-world tunnel. Bounded by the connection token's allowedTargetClients
+  // + remoteScopes. Returns the target's response data, or rejects with an Error.
+  remoteRequest: (
+    targetClientId: string,
+    action: string,
+    payload?: Record<string, any>,
+    opts?: { autoStartIfOffline?: boolean; timeoutMs?: number }
+  ) => Promise<any>;
 }
 
 export interface WebSocketMessage {

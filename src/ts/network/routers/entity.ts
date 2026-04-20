@@ -2,8 +2,20 @@ import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
 import { deepSerializeEntity } from "../../utils/serialization";
 import { resolveRequestUser, serializeWithPermission, filterByPermission, assertWritePermission } from "../../utils/permissions";
+import { moduleId, SETTINGS } from "../../constants";
+import { searchIndex } from "../../utils/searchIndex";
 
 export const router = new Router("entityRouter");
+
+/**
+ * Returns true if the given scope is absent from the _scopes list forwarded
+ * by the relay. Absence (undefined) means the request came from a master key,
+ * which has unrestricted access.
+ */
+function lacksScope(scopes: string[] | undefined, required: string): boolean {
+  if (scopes === undefined) return false; // master key — no restriction
+  return !scopes.includes(required);
+}
 
 router.addRoute({
   actionType: "entity",
@@ -115,6 +127,25 @@ router.addRoute({
         }
       }
 
+      if (data.entityType === "Macro") {
+        if (!game.settings.get(moduleId, SETTINGS.ALLOW_MACRO_WRITE)) {
+          socketManager?.send({
+            type: "create-result",
+            requestId: data.requestId,
+            error: "Macro creation is disabled in REST API module settings. A GM must enable 'Allow Macro Creation/Editing' to allow this."
+          });
+          return;
+        }
+        if (lacksScope(data._scopes, "macro:write")) {
+          socketManager?.send({
+            type: "create-result",
+            requestId: data.requestId,
+            error: "macro:write scope is required to create macros"
+          });
+          return;
+        }
+      }
+
       const DocumentClass = getDocumentClass(data.entityType);
       if (!DocumentClass) {
         throw new Error(`Invalid entity type: ${data.entityType}`);
@@ -125,7 +156,23 @@ router.addRoute({
         folder: data.folder || null
       };
 
-      const entity = await DocumentClass.create(createData);
+      const createOptions: any = {};
+      if (data.keepId && createData._id) {
+        createOptions.keepId = true;
+        const collection = game.collections.get(data.entityType);
+        const existing = collection?.get(createData._id);
+        if (existing && !data.override) {
+          socketManager?.send({
+            type: "create-result",
+            requestId: data.requestId,
+            error: `Entity with ID '${createData._id}' already exists. Set override=true to replace it.`,
+            message: "Failed to create entity"
+          });
+          return;
+        }
+      }
+
+      const entity = await DocumentClass.create(createData, createOptions);
 
       if (!entity) {
         throw new Error("Failed to create entity");
@@ -342,6 +389,27 @@ router.addRoute({
         throw new Error(`Entity not found: ${data.uuid}`);
       }
 
+      for (const entity of entities) {
+        if ((entity as any)?.documentName === "Macro") {
+          if (!game.settings.get(moduleId, SETTINGS.ALLOW_MACRO_WRITE)) {
+            socketManager?.send({
+              type: "update-result",
+              requestId: data.requestId,
+              error: "Macro editing is disabled in REST API module settings. A GM must enable 'Allow Macro Creation/Editing' to allow this."
+            });
+            return;
+          }
+          if (lacksScope(data._scopes, "macro:write")) {
+            socketManager?.send({
+              type: "update-result",
+              requestId: data.requestId,
+              error: "macro:write scope is required to update macros"
+            });
+            return;
+          }
+        }
+      }
+
       if (user) {
         for (const entity of entities) {
           assertWritePermission(entity, user, "update");
@@ -405,6 +473,27 @@ router.addRoute({
 
       if (!entities || entities.length === 0) {
         throw new Error(`Entity not found: ${data.uuid}`);
+      }
+
+      for (const entity of entities) {
+        if ((entity as any)?.documentName === "Macro") {
+          if (!game.settings.get(moduleId, SETTINGS.ALLOW_MACRO_WRITE)) {
+            socketManager?.send({
+              type: "delete-result",
+              requestId: data.requestId,
+              error: "Macro deletion is disabled in REST API module settings. A GM must enable 'Allow Macro Creation/Editing' to allow this."
+            });
+            return;
+          }
+          if (lacksScope(data._scopes, "macro:write")) {
+            socketManager?.send({
+              type: "delete-result",
+              requestId: data.requestId,
+              error: "macro:write scope is required to delete macros"
+            });
+            return;
+          }
+        }
       }
 
       if (user) {
@@ -675,24 +764,17 @@ router.addRoute({
             itemData = itemEntity.toObject();
           }
         } else {
-          // Global search if no fromUuid
-          if (!window.QuickInsert) {
-            throw new Error("QuickInsert is not available for global item search.");
-          }
-
-          if (!window.QuickInsert.hasIndex) {
-            ModuleLogger.info(`QuickInsert index not ready, forcing index creation`);
-            window.QuickInsert.forceIndex();
-            await new Promise(resolve => setTimeout(resolve, 500)); // Give index time to build
-          }
-
-          const searchResults = await window.QuickInsert.search(data.itemName, null, 20); // Search all documents
-          const itemSearchResult = searchResults.find(r => r.item?.documentType === "Item");
-
-          if (itemSearchResult) {
-            const foundItem = await itemSearchResult.item.get(); // Asynchronously get the full document
+          // Global item search using the native search index
+          if (!searchIndex.isReady) searchIndex.build();
+          const searchResults = await searchIndex.search(data.itemName, {
+            limit: 20,
+            filters: { documentType: "Item" }
+          });
+          const match = searchResults[0];
+          if (match) {
+            const foundItem = await fromUuid(match.entry.uuid);
             if (foundItem) {
-              itemData = foundItem.toObject(); // Get the plain data object
+              itemData = (foundItem as any).toObject();
             }
           }
         }

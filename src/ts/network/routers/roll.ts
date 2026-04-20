@@ -1,6 +1,6 @@
 import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
-import { recentRolls } from "../../constants";
+import { recentRolls, MAX_ROLLS_STORED } from "../../constants";
 import { resolveRequestUser } from "../../utils/permissions";
 
 export const router = new Router("rollRouter");
@@ -136,6 +136,23 @@ router.addRoute({
         });
         return;
       }
+
+      // Add to recentRolls so GET /rolls and GET /lastroll reflect this roll
+      const rollEntry = {
+        id: rollResult.id,
+        messageId: rollResult.chatMessageCreated ? rollResult.id : null,
+        user: null,
+        speaker: speakerData || {},
+        flavor: flavor || "",
+        rollTotal: rollResult.roll.total,
+        formula: rollResult.roll.formula,
+        isCritical: rollResult.roll.isCritical,
+        isFumble: rollResult.roll.isFumble,
+        dice: rollResult.roll.dice,
+        timestamp: rollResult.roll.timestamp,
+      };
+      recentRolls.unshift(rollEntry);
+      if (recentRolls.length > MAX_ROLLS_STORED) recentRolls.length = MAX_ROLLS_STORED;
 
       socketManager?.send({
         type: "roll-result",

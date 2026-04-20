@@ -1,11 +1,29 @@
+/**
+ * Represents a single entry in the native search index.
+ * All world and compendium entities are stored as SearchEntry objects.
+ */
+export interface SearchEntry {
+  documentType: string;      // "Actor", "Item", "Scene", etc.
+  id: string;
+  name: string;
+  uuid: string;
+  folder: string | null;     // Folder ID or null for root/compendium entries
+  pack: string | null;       // Compendium collection ID (null for world entities)
+  packageName: string | null; // Human-readable compendium title
+  subType: string;           // entity.type value: "npc", "weapon", "spell", etc.
+  icon: string;              // entity.img path or empty string
+  tagline: string;           // "Actors Directory", pack title, etc.
+  resultType: string;        // "WorldEntity" | "CompendiumEntity"
+}
+
 export function parseFilterString(filterStr: string): Record<string, string> {
     if (!filterStr.includes(':')) {
       return { documentType: filterStr };
     }
-    
+
     const filters: Record<string, string> = {};
     const parts = filterStr.split(',');
-    
+
     for (const part of parts) {
       if (part.includes(':')) {
         const [key, value] = part.split(':');
@@ -14,90 +32,54 @@ export function parseFilterString(filterStr: string): Record<string, string> {
         }
       }
     }
-    
+
     return filters;
 }
 
-export function matchesAllFilters(result: any, filters: Record<string, string>): boolean {
+/**
+ * Check whether a SearchEntry matches all provided filters.
+ * Supports filter keys: documentType, subType, folder, package (compendium), resultType,
+ * and any other flat property on SearchEntry.
+ */
+export function matchesAllFilters(entry: SearchEntry, filters: Record<string, string>): boolean {
     for (const [key, value] of Object.entries(filters)) {
       if (!value) continue;
-      
-      // Special handling for resultType (constructor name)
+
       if (key === "resultType") {
-        const itemConstructorName = result.item?.constructor?.name;
-        if (!itemConstructorName || itemConstructorName.toLowerCase() !== value.toLowerCase()) {
+        if (!entry.resultType || entry.resultType.toLowerCase() !== value.toLowerCase()) {
           return false;
         }
         continue;
       }
-      
-      // Special handling for package (compendium) paths
-      if (key === "package" && result.item) {
-        const packageValue = result.item.package;
-        if (!packageValue) return false;
-        
-        // Check if the package matches or if it's a part of the full path
-        if (packageValue.toLowerCase() !== value.toLowerCase() && 
-            !(`Compendium.${packageValue}`.toLowerCase() === value.toLowerCase())) {
+
+      if (key === "package") {
+        const packValue = entry.pack;
+        if (!packValue) return false;
+        if (packValue.toLowerCase() !== value.toLowerCase() &&
+            `Compendium.${packValue}`.toLowerCase() !== value.toLowerCase()) {
           return false;
         }
         continue;
       }
-      
-      // Special handling for folder references
-      if (key === "folder" && result.item) {
-        const folderValue = result.item.folder;
-        
-        // No folder when one is required
-        if (!folderValue && value) return false;
-        
-        // Folder exists, check various formats:
-        if (folderValue) {
-          const folderIdMatch = typeof folderValue === 'object' ? folderValue.id : folderValue;
-          
-          // Accept any of these formats:
-          // - Just the ID: "zmAZJmay9AxvRNqh"
-          // - Full Folder UUID: "Folder.zmAZJmay9AxvRNqh"
-          // - Object format with ID
-          if (value === folderIdMatch || 
-              value === `Folder.${folderIdMatch}` ||
-              `Folder.${value}` === folderIdMatch) {
-            continue; // Match found, continue to next filter
-          }
-          
-          // If we get here, folder doesn't match
-          return false;
+
+      if (key === "folder") {
+        const folderValue = entry.folder;
+        if (!folderValue) return false;
+        if (value === folderValue ||
+            value === `Folder.${folderValue}` ||
+            `Folder.${value}` === folderValue) {
+          continue;
         }
-        
-        continue;
+        return false;
       }
-      
-      // Standard property handling
-      let propertyValue;
-      if (!key.includes('.') && result.item && result.item[key] !== undefined) {
-        propertyValue = result.item[key];
-      } else {
-        const parts = key.split('.');
-        let current = result;
-        
-        for (const part of parts) {
-          if (current === undefined || current === null) {
-            propertyValue = undefined;
-            break;
-          }
-          current = current[part];
-        }
-        
-        propertyValue = current;
-      }
-      
-      // If the property is missing or doesn't match, filter it out
-      if (propertyValue === undefined || 
+
+      const propertyValue = (entry as any)[key];
+      if (propertyValue === undefined ||
           (typeof propertyValue === 'string' &&
            propertyValue.toLowerCase() !== value.toLowerCase())) {
         return false;
       }
     }
-    
+
     return true;
 }

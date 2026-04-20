@@ -49,3 +49,9 @@
 [data-settings-key="foundry-rest-api.apiKey"] > .form-fields {
     flex-direction: column !important;
 }
+
+// prevent long URLs in dialogs from overflowing
+.dialog code {
+    word-break: break-all;
+    overflow-wrap: break-word;
+}

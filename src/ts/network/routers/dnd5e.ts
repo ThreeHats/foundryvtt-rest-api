@@ -1,6 +1,7 @@
 import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
 import { resolveRequestUser, serializeWithPermission, assertWritePermission } from "../../utils/permissions";
+import { getFoundryVersionMajor } from "../../utils/version";
 
 export const router = new Router("dnd5eRouter");
 
@@ -297,7 +298,10 @@ Hooks.once('init', () => {
                         assertWritePermission(actor, user, "modify experience on");
                     }
 
-                    const currentXp = actor.system.details.xp.value;
+                    const xp = actor.system.details?.xp;
+                    if (!xp) throw new Error(`Actor '${actor.name}' does not have experience points (may be an NPC or using milestone leveling)`);
+
+                    const currentXp = xp.value;
                     const newXp = currentXp + amount;
 
                     await actor.update({ "system.details.xp.value": newXp });
@@ -316,6 +320,831 @@ Hooks.once('init', () => {
                     ModuleLogger.error(`Error in modify-experience:`, error);
                     socketManager?.send({
                         type: "modify-experience-result",
+                        requestId: data.requestId,
+                        error: (error as Error).message,
+                    });
+                }
+            }
+        });
+
+        // Short rest
+        router.addRoute({
+            actionType: "short-rest",
+            handler: async (data, context) => {
+                const socketManager = context?.socketManager;
+                ModuleLogger.info(`Received short-rest request:`, data);
+
+                try {
+                    const { user, shouldReturn } = resolveRequestUser(data, socketManager, "short-rest-result");
+                    if (shouldReturn) return;
+
+                    const { actorUuid, selected, autoHD, autoHDThreshold } = data;
+                    if (!actorUuid && !selected) throw new Error("Either actorUuid or selected must be provided");
+
+                    let actor: any = null;
+                    if (actorUuid) {
+                        actor = await fromUuid(actorUuid);
+                    } else if (selected) {
+                        const selectedTokens = canvas.tokens?.controlled;
+                        if (!selectedTokens || selectedTokens.length === 0) throw new Error("No token selected");
+                        actor = selectedTokens[0].actor;
+                    }
+
+                    if (!actor) throw new Error("Actor not found");
+
+                    if (user) {
+                        assertWritePermission(actor, user, "perform a short rest on");
+                    }
+
+                    const restOptions: any = { dialog: false, chat: true };
+                    if (autoHD !== undefined) restOptions.autoHD = autoHD;
+                    if (autoHDThreshold !== undefined) restOptions.autoHDThreshold = autoHDThreshold;
+
+                    const result = await actor.shortRest(restOptions);
+
+                    socketManager?.send({
+                        type: "short-rest-result",
+                        requestId: data.requestId,
+                        data: {
+                            actorUuid: actor.uuid,
+                            result: result || { completed: true },
+                        },
+                    });
+
+                } catch (error) {
+                    ModuleLogger.error(`Error in short-rest:`, error);
+                    socketManager?.send({
+                        type: "short-rest-result",
+                        requestId: data.requestId,
+                        error: (error as Error).message,
+                    });
+                }
+            }
+        });
+
+        // Long rest
+        router.addRoute({
+            actionType: "long-rest",
+            handler: async (data, context) => {
+                const socketManager = context?.socketManager;
+                ModuleLogger.info(`Received long-rest request:`, data);
+
+                try {
+                    const { user, shouldReturn } = resolveRequestUser(data, socketManager, "long-rest-result");
+                    if (shouldReturn) return;
+
+                    const { actorUuid, selected, newDay } = data;
+                    if (!actorUuid && !selected) throw new Error("Either actorUuid or selected must be provided");
+
+                    let actor: any = null;
+                    if (actorUuid) {
+                        actor = await fromUuid(actorUuid);
+                    } else if (selected) {
+                        const selectedTokens = canvas.tokens?.controlled;
+                        if (!selectedTokens || selectedTokens.length === 0) throw new Error("No token selected");
+                        actor = selectedTokens[0].actor;
+                    }
+
+                    if (!actor) throw new Error("Actor not found");
+
+                    if (user) {
+                        assertWritePermission(actor, user, "perform a long rest on");
+                    }
+
+                    const restOptions: any = { dialog: false, chat: true };
+                    if (newDay !== undefined) restOptions.newDay = newDay;
+                    else restOptions.newDay = true;
+
+                    const result = await actor.longRest(restOptions);
+
+                    socketManager?.send({
+                        type: "long-rest-result",
+                        requestId: data.requestId,
+                        data: {
+                            actorUuid: actor.uuid,
+                            result: result || { completed: true },
+                        },
+                    });
+
+                } catch (error) {
+                    ModuleLogger.error(`Error in long-rest:`, error);
+                    socketManager?.send({
+                        type: "long-rest-result",
+                        requestId: data.requestId,
+                        error: (error as Error).message,
+                    });
+                }
+            }
+        });
+
+        // Skill check
+        router.addRoute({
+            actionType: "skill-check",
+            handler: async (data, context) => {
+                const socketManager = context?.socketManager;
+                ModuleLogger.info(`Received skill-check request:`, data);
+
+                try {
+                    const { user, shouldReturn } = resolveRequestUser(data, socketManager, "skill-check-result");
+                    if (shouldReturn) return;
+
+                    const { actorUuid, skill, advantage, disadvantage, bonus, createChatMessage } = data;
+                    if (!actorUuid) throw new Error("actorUuid is required");
+                    if (!skill) throw new Error("skill is required");
+
+                    const validSkills = ['acr', 'ani', 'arc', 'ath', 'dec', 'his', 'ins', 'itm', 'inv', 'med', 'nat', 'prc', 'prf', 'per', 'rel', 'slt', 'ste', 'sur'];
+                    if (!validSkills.includes(skill)) {
+                        throw new Error(`Invalid skill '${skill}'. Valid skills: ${validSkills.join(', ')}`);
+                    }
+
+                    const actor: any = await fromUuid(actorUuid);
+                    if (!actor) throw new Error(`Actor not found with UUID: ${actorUuid}`);
+
+                    if (user) {
+                        const serialized = serializeWithPermission(actor, user);
+                        if (!serialized) {
+                            throw new Error(`User '${user.name}' does not have permission to view actor '${actor.name}'`);
+                        }
+                    }
+
+                    let roll: any;
+                    const isV13 = getFoundryVersionMajor() >= 13;
+
+                    if (isV13) {
+                        // dnd5e v4 (Foundry v13): rollSkill(config, dialog, message)
+                        const config: any = { skill };
+                        if (bonus) config.rolls = [{ parts: [bonus] }];
+
+                        const dialogConfig: any = { configure: false };
+                        if (advantage) {
+                            dialogConfig.options = { advantageMode: 1 };
+                        } else if (disadvantage) {
+                            dialogConfig.options = { advantageMode: -1 };
+                        } else {
+                            dialogConfig.options = { advantageMode: 0 };
+                        }
+
+                        const messageConfig: any = {};
+                        if (createChatMessage !== undefined) messageConfig.create = createChatMessage;
+
+                        const rolls = await actor.rollSkill(config, dialogConfig, messageConfig);
+                        roll = rolls?.[0];
+                    } else {
+                        // dnd5e v3 (Foundry v12): rollSkill(skillId, options)
+                        const rollOptions: any = { fastForward: true };
+                        if (advantage) rollOptions.advantage = true;
+                        if (disadvantage) rollOptions.disadvantage = true;
+                        if (bonus) rollOptions.parts = [bonus];
+                        if (createChatMessage !== undefined) rollOptions.chatMessage = createChatMessage;
+
+                        roll = await actor.rollSkill(skill, rollOptions);
+                    }
+
+                    socketManager?.send({
+                        type: "skill-check-result",
+                        requestId: data.requestId,
+                        data: {
+                            actorUuid: actor.uuid,
+                            skill,
+                            total: roll?.total,
+                            formula: roll?.formula,
+                            result: roll?.result,
+                        },
+                    });
+
+                } catch (error) {
+                    ModuleLogger.error(`Error in skill-check:`, error);
+                    socketManager?.send({
+                        type: "skill-check-result",
+                        requestId: data.requestId,
+                        error: (error as Error).message,
+                    });
+                }
+            }
+        });
+
+        // Ability saving throw
+        router.addRoute({
+            actionType: "ability-save",
+            handler: async (data, context) => {
+                const socketManager = context?.socketManager;
+                ModuleLogger.info(`Received ability-save request:`, data);
+
+                try {
+                    const { user, shouldReturn } = resolveRequestUser(data, socketManager, "ability-save-result");
+                    if (shouldReturn) return;
+
+                    const { actorUuid, ability, advantage, disadvantage, bonus, createChatMessage } = data;
+                    if (!actorUuid) throw new Error("actorUuid is required");
+                    if (!ability) throw new Error("ability is required");
+
+                    const validAbilities = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
+                    if (!validAbilities.includes(ability)) {
+                        throw new Error(`Invalid ability '${ability}'. Valid abilities: ${validAbilities.join(', ')}`);
+                    }
+
+                    const actor: any = await fromUuid(actorUuid);
+                    if (!actor) throw new Error(`Actor not found with UUID: ${actorUuid}`);
+
+                    if (user) {
+                        const serialized = serializeWithPermission(actor, user);
+                        if (!serialized) {
+                            throw new Error(`User '${user.name}' does not have permission to view actor '${actor.name}'`);
+                        }
+                    }
+
+                    let roll: any;
+                    const isV13 = getFoundryVersionMajor() >= 13;
+
+                    if (isV13) {
+                        // dnd5e v4 (Foundry v13): rollSavingThrow(config, dialog, message)
+                        const config: any = { ability };
+                        if (bonus) config.rolls = [{ parts: [bonus] }];
+
+                        const dialogConfig: any = { configure: false };
+                        if (advantage) {
+                            dialogConfig.options = { advantageMode: 1 };
+                        } else if (disadvantage) {
+                            dialogConfig.options = { advantageMode: -1 };
+                        } else {
+                            dialogConfig.options = { advantageMode: 0 };
+                        }
+
+                        const messageConfig: any = {};
+                        if (createChatMessage !== undefined) messageConfig.create = createChatMessage;
+
+                        const rolls = await actor.rollSavingThrow(config, dialogConfig, messageConfig);
+                        roll = rolls?.[0];
+                    } else {
+                        // dnd5e v3 (Foundry v12): rollAbilitySave(abilityId, options)
+                        const rollOptions: any = { fastForward: true };
+                        if (advantage) rollOptions.advantage = true;
+                        if (disadvantage) rollOptions.disadvantage = true;
+                        if (bonus) rollOptions.parts = [bonus];
+                        if (createChatMessage !== undefined) rollOptions.chatMessage = createChatMessage;
+
+                        roll = await actor.rollAbilitySave(ability, rollOptions);
+                    }
+
+                    socketManager?.send({
+                        type: "ability-save-result",
+                        requestId: data.requestId,
+                        data: {
+                            actorUuid: actor.uuid,
+                            ability,
+                            total: roll?.total,
+                            formula: roll?.formula,
+                            result: roll?.result,
+                        },
+                    });
+
+                } catch (error) {
+                    ModuleLogger.error(`Error in ability-save:`, error);
+                    socketManager?.send({
+                        type: "ability-save-result",
+                        requestId: data.requestId,
+                        error: (error as Error).message,
+                    });
+                }
+            }
+        });
+
+        // Ability check (raw ability test)
+        router.addRoute({
+            actionType: "ability-check",
+            handler: async (data, context) => {
+                const socketManager = context?.socketManager;
+                ModuleLogger.info(`Received ability-check request:`, data);
+
+                try {
+                    const { user, shouldReturn } = resolveRequestUser(data, socketManager, "ability-check-result");
+                    if (shouldReturn) return;
+
+                    const { actorUuid, ability, advantage, disadvantage, bonus, createChatMessage } = data;
+                    if (!actorUuid) throw new Error("actorUuid is required");
+                    if (!ability) throw new Error("ability is required");
+
+                    const validAbilities = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
+                    if (!validAbilities.includes(ability)) {
+                        throw new Error(`Invalid ability '${ability}'. Valid abilities: ${validAbilities.join(', ')}`);
+                    }
+
+                    const actor: any = await fromUuid(actorUuid);
+                    if (!actor) throw new Error(`Actor not found with UUID: ${actorUuid}`);
+
+                    if (user) {
+                        const serialized = serializeWithPermission(actor, user);
+                        if (!serialized) {
+                            throw new Error(`User '${user.name}' does not have permission to view actor '${actor.name}'`);
+                        }
+                    }
+
+                    let roll: any;
+                    const isV13 = getFoundryVersionMajor() >= 13;
+
+                    if (isV13) {
+                        // dnd5e v4 (Foundry v13): rollAbilityCheck(config, dialog, message)
+                        const config: any = { ability };
+                        if (bonus) config.rolls = [{ parts: [bonus] }];
+
+                        const dialogConfig: any = { configure: false };
+                        if (advantage) {
+                            dialogConfig.options = { advantageMode: 1 };
+                        } else if (disadvantage) {
+                            dialogConfig.options = { advantageMode: -1 };
+                        } else {
+                            dialogConfig.options = { advantageMode: 0 };
+                        }
+
+                        const messageConfig: any = {};
+                        if (createChatMessage !== undefined) messageConfig.create = createChatMessage;
+
+                        const rolls = await actor.rollAbilityCheck(config, dialogConfig, messageConfig);
+                        roll = rolls?.[0];
+                    } else {
+                        // dnd5e v3 (Foundry v12): rollAbilityTest(abilityId, options)
+                        const rollOptions: any = { fastForward: true };
+                        if (advantage) rollOptions.advantage = true;
+                        if (disadvantage) rollOptions.disadvantage = true;
+                        if (bonus) rollOptions.parts = [bonus];
+                        if (createChatMessage !== undefined) rollOptions.chatMessage = createChatMessage;
+
+                        roll = await actor.rollAbilityTest(ability, rollOptions);
+                    }
+
+                    socketManager?.send({
+                        type: "ability-check-result",
+                        requestId: data.requestId,
+                        data: {
+                            actorUuid: actor.uuid,
+                            ability,
+                            total: roll?.total,
+                            formula: roll?.formula,
+                            result: roll?.result,
+                        },
+                    });
+
+                } catch (error) {
+                    ModuleLogger.error(`Error in ability-check:`, error);
+                    socketManager?.send({
+                        type: "ability-check-result",
+                        requestId: data.requestId,
+                        error: (error as Error).message,
+                    });
+                }
+            }
+        });
+
+        // Death saving throw
+        router.addRoute({
+            actionType: "death-save",
+            handler: async (data, context) => {
+                const socketManager = context?.socketManager;
+                ModuleLogger.info(`Received death-save request:`, data);
+
+                try {
+                    const { user, shouldReturn } = resolveRequestUser(data, socketManager, "death-save-result");
+                    if (shouldReturn) return;
+
+                    const { actorUuid, advantage, createChatMessage } = data;
+                    if (!actorUuid) throw new Error("actorUuid is required");
+
+                    const actor: any = await fromUuid(actorUuid);
+                    if (!actor) throw new Error(`Actor not found with UUID: ${actorUuid}`);
+
+                    if (user) {
+                        assertWritePermission(actor, user, "roll death saves for");
+                    }
+
+                    let roll: any;
+                    const isV13 = getFoundryVersionMajor() >= 13;
+
+                    if (isV13) {
+                        // dnd5e v4 (Foundry v13): rollDeathSave(config, dialog, message)
+                        const config: any = {};
+
+                        const dialogConfig: any = { configure: false };
+                        if (advantage) {
+                            dialogConfig.options = { advantageMode: 1 };
+                        } else {
+                            dialogConfig.options = { advantageMode: 0 };
+                        }
+
+                        const messageConfig: any = {};
+                        if (createChatMessage !== undefined) messageConfig.create = createChatMessage;
+
+                        const rolls = await actor.rollDeathSave(config, dialogConfig, messageConfig);
+                        roll = rolls?.[0];
+                    } else {
+                        // dnd5e v3 (Foundry v12): rollDeathSave(options)
+                        const rollOptions: any = { fastForward: true };
+                        if (advantage) rollOptions.advantage = true;
+                        if (createChatMessage !== undefined) rollOptions.chatMessage = createChatMessage;
+
+                        roll = await actor.rollDeathSave(rollOptions);
+                    }
+
+                    const deathSaves = actor.system?.attributes?.death || {};
+
+                    socketManager?.send({
+                        type: "death-save-result",
+                        requestId: data.requestId,
+                        data: {
+                            actorUuid: actor.uuid,
+                            total: roll?.total,
+                            formula: roll?.formula,
+                            result: roll?.result,
+                            deathSaves: {
+                                success: deathSaves.success || 0,
+                                failure: deathSaves.failure || 0,
+                            },
+                        },
+                    });
+
+                } catch (error) {
+                    ModuleLogger.error(`Error in death-save:`, error);
+                    socketManager?.send({
+                        type: "death-save-result",
+                        requestId: data.requestId,
+                        error: (error as Error).message,
+                    });
+                }
+            }
+        });
+
+        // --- Shared helper: resolve actor by UUID or name ---
+        const resolveActor = async (data: any): Promise<any> => {
+            const { actorUuid, actorName } = data;
+            if (!actorUuid && !actorName) throw new Error("actorUuid or actorName is required");
+
+            let actor: any = null;
+            if (actorUuid) {
+                actor = await fromUuid(actorUuid);
+            } else if (actorName) {
+                actor = game.actors?.find((a: any) => a.name.toLowerCase() === actorName.toLowerCase());
+            }
+            if (!actor) throw new Error(`Actor not found: ${actorUuid || actorName}`);
+            if (actor.actor) actor = actor.actor;
+            return actor;
+        };
+
+        // --- Shared helper: resolve item on actor by UUID or name ---
+        const resolveItem = (actor: any, data: any): any => {
+            const { itemUuid, itemName } = data;
+            if (!itemUuid && !itemName) throw new Error("itemUuid or itemName is required");
+
+            let item: any = null;
+            if (itemUuid) {
+                item = actor.items.get(itemUuid.split('.').pop());
+                if (!item) item = actor.items.find((i: any) => i.uuid === itemUuid);
+            } else if (itemName) {
+                item = actor.items.find((i: any) => i.name.toLowerCase() === itemName.toLowerCase());
+            }
+            if (!item) throw new Error(`Item not found on actor ${actor.name}: ${itemUuid || itemName}`);
+            return item;
+        };
+
+        // --- Concentration Tracking ---
+
+        router.addRoute({
+            actionType: "get-concentration",
+            handler: async (data, context) => {
+                const socketManager = context?.socketManager;
+                ModuleLogger.info(`Received get-concentration request:`, data);
+
+                try {
+                    const { user, shouldReturn } = resolveRequestUser(data, socketManager, "get-concentration-result");
+                    if (shouldReturn) return;
+
+                    const actor = await resolveActor(data);
+
+                    if (user) {
+                        const serialized = serializeWithPermission(actor, user);
+                        if (!serialized) throw new Error(`User '${user.name}' does not have permission to view actor '${actor.name}'`);
+                    }
+
+                    const concentrationEffect = actor.effects?.find((e: any) =>
+                        e.statuses?.has("concentrating") || e.statuses?.has("concentration")
+                    );
+
+                    let spellName: string | null = null;
+                    if (concentrationEffect?.origin) {
+                        try {
+                            const originItem: any = await fromUuid(concentrationEffect.origin);
+                            spellName = originItem?.name || null;
+                        } catch { /* origin may not resolve */ }
+                    }
+
+                    socketManager?.send({
+                        type: "get-concentration-result",
+                        requestId: data.requestId,
+                        data: {
+                            actorUuid: actor.uuid,
+                            isConcentrating: !!concentrationEffect,
+                            effect: concentrationEffect ? {
+                                id: concentrationEffect.id,
+                                uuid: concentrationEffect.uuid,
+                                name: concentrationEffect.name || concentrationEffect.label,
+                                icon: concentrationEffect.icon || concentrationEffect.img,
+                                statuses: Array.from(concentrationEffect.statuses || []),
+                                origin: concentrationEffect.origin,
+                            } : null,
+                            spell: spellName,
+                        },
+                    });
+                } catch (error) {
+                    ModuleLogger.error(`Error in get-concentration:`, error);
+                    socketManager?.send({
+                        type: "get-concentration-result",
+                        requestId: data.requestId,
+                        error: (error as Error).message,
+                    });
+                }
+            }
+        });
+
+        router.addRoute({
+            actionType: "break-concentration",
+            handler: async (data, context) => {
+                const socketManager = context?.socketManager;
+                ModuleLogger.info(`Received break-concentration request:`, data);
+
+                try {
+                    const { user, shouldReturn } = resolveRequestUser(data, socketManager, "break-concentration-result");
+                    if (shouldReturn) return;
+
+                    const actor = await resolveActor(data);
+                    if (user) assertWritePermission(actor, user, "break concentration on");
+
+                    const concentrationEffect = actor.effects?.find((e: any) =>
+                        e.statuses?.has("concentrating") || e.statuses?.has("concentration")
+                    );
+
+                    if (!concentrationEffect) {
+                        throw new Error(`Actor '${actor.name}' is not concentrating`);
+                    }
+
+                    await actor.deleteEmbeddedDocuments("ActiveEffect", [concentrationEffect.id]);
+
+                    socketManager?.send({
+                        type: "break-concentration-result",
+                        requestId: data.requestId,
+                        data: {
+                            actorUuid: actor.uuid,
+                            broken: true,
+                            removedEffectId: concentrationEffect.id,
+                        },
+                    });
+                } catch (error) {
+                    ModuleLogger.error(`Error in break-concentration:`, error);
+                    socketManager?.send({
+                        type: "break-concentration-result",
+                        requestId: data.requestId,
+                        error: (error as Error).message,
+                    });
+                }
+            }
+        });
+
+        router.addRoute({
+            actionType: "concentration-save",
+            handler: async (data, context) => {
+                const socketManager = context?.socketManager;
+                ModuleLogger.info(`Received concentration-save request:`, data);
+
+                try {
+                    const { user, shouldReturn } = resolveRequestUser(data, socketManager, "concentration-save-result");
+                    if (shouldReturn) return;
+
+                    const actor = await resolveActor(data);
+                    if (user) assertWritePermission(actor, user, "roll concentration saves for");
+
+                    const concentrationEffect = actor.effects?.find((e: any) =>
+                        e.statuses?.has("concentrating") || e.statuses?.has("concentration")
+                    );
+
+                    if (!concentrationEffect) {
+                        throw new Error(`Actor '${actor.name}' is not concentrating`);
+                    }
+
+                    const { damage, advantage, disadvantage, bonus, createChatMessage } = data;
+                    if (typeof damage !== 'number') throw new Error("damage must be a number");
+
+                    const dc = Math.max(10, Math.floor(damage / 2));
+
+                    let roll: any;
+                    const isV13 = getFoundryVersionMajor() >= 13;
+
+                    if (isV13) {
+                        const config: any = { ability: "con" };
+                        if (bonus) config.rolls = [{ parts: [bonus] }];
+
+                        const dialogConfig: any = { configure: false };
+                        if (advantage) dialogConfig.options = { advantageMode: 1 };
+                        else if (disadvantage) dialogConfig.options = { advantageMode: -1 };
+                        else dialogConfig.options = { advantageMode: 0 };
+
+                        const messageConfig: any = {};
+                        if (createChatMessage !== undefined) messageConfig.create = createChatMessage;
+
+                        const rolls = await actor.rollSavingThrow(config, dialogConfig, messageConfig);
+                        roll = rolls?.[0];
+                    } else {
+                        const rollOptions: any = { fastForward: true };
+                        if (advantage) rollOptions.advantage = true;
+                        if (disadvantage) rollOptions.disadvantage = true;
+                        if (bonus) rollOptions.parts = [bonus];
+                        if (createChatMessage !== undefined) rollOptions.chatMessage = createChatMessage;
+
+                        roll = await actor.rollAbilitySave("con", rollOptions);
+                    }
+
+                    const maintained = (roll?.total ?? 0) >= dc;
+
+                    if (!maintained) {
+                        await actor.deleteEmbeddedDocuments("ActiveEffect", [concentrationEffect.id]);
+                    }
+
+                    socketManager?.send({
+                        type: "concentration-save-result",
+                        requestId: data.requestId,
+                        data: {
+                            actorUuid: actor.uuid,
+                            dc,
+                            total: roll?.total,
+                            formula: roll?.formula,
+                            result: roll?.result,
+                            maintained,
+                        },
+                    });
+                } catch (error) {
+                    ModuleLogger.error(`Error in concentration-save:`, error);
+                    socketManager?.send({
+                        type: "concentration-save-result",
+                        requestId: data.requestId,
+                        error: (error as Error).message,
+                    });
+                }
+            }
+        });
+
+        // --- Inventory Management ---
+
+        router.addRoute({
+            actionType: "equip-item",
+            handler: async (data, context) => {
+                const socketManager = context?.socketManager;
+                ModuleLogger.info(`Received equip-item request:`, data);
+
+                try {
+                    const { user, shouldReturn } = resolveRequestUser(data, socketManager, "equip-item-result");
+                    if (shouldReturn) return;
+
+                    const actor = await resolveActor(data);
+                    if (user) assertWritePermission(actor, user, "modify items on");
+
+                    const item = resolveItem(actor, data);
+                    const equipped = data.equipped;
+                    if (typeof equipped !== 'boolean') throw new Error("equipped must be a boolean");
+
+                    await item.update({ "system.equipped": equipped });
+
+                    socketManager?.send({
+                        type: "equip-item-result",
+                        requestId: data.requestId,
+                        data: {
+                            actorUuid: actor.uuid,
+                            itemUuid: item.uuid,
+                            itemName: item.name,
+                            equipped,
+                        },
+                    });
+                } catch (error) {
+                    ModuleLogger.error(`Error in equip-item:`, error);
+                    socketManager?.send({
+                        type: "equip-item-result",
+                        requestId: data.requestId,
+                        error: (error as Error).message,
+                    });
+                }
+            }
+        });
+
+        router.addRoute({
+            actionType: "attune-item",
+            handler: async (data, context) => {
+                const socketManager = context?.socketManager;
+                ModuleLogger.info(`Received attune-item request:`, data);
+
+                try {
+                    const { user, shouldReturn } = resolveRequestUser(data, socketManager, "attune-item-result");
+                    if (shouldReturn) return;
+
+                    const actor = await resolveActor(data);
+                    if (user) assertWritePermission(actor, user, "modify items on");
+
+                    const item = resolveItem(actor, data);
+                    const attuned = data.attuned;
+                    if (typeof attuned !== 'boolean') throw new Error("attuned must be a boolean");
+
+                    const isV13 = getFoundryVersionMajor() >= 13;
+
+                    if (isV13) {
+                        await item.update({ "system.attuned": attuned });
+                    } else {
+                        const currentReq = item.system.attunement || 0;
+                        if (attuned) {
+                            await item.update({ "system.attunement": 2 });
+                        } else {
+                            await item.update({ "system.attunement": currentReq === 2 ? 1 : currentReq });
+                        }
+                    }
+
+                    socketManager?.send({
+                        type: "attune-item-result",
+                        requestId: data.requestId,
+                        data: {
+                            actorUuid: actor.uuid,
+                            itemUuid: item.uuid,
+                            itemName: item.name,
+                            attuned,
+                        },
+                    });
+                } catch (error) {
+                    ModuleLogger.error(`Error in attune-item:`, error);
+                    socketManager?.send({
+                        type: "attune-item-result",
+                        requestId: data.requestId,
+                        error: (error as Error).message,
+                    });
+                }
+            }
+        });
+
+        router.addRoute({
+            actionType: "transfer-currency",
+            handler: async (data, context) => {
+                const socketManager = context?.socketManager;
+                ModuleLogger.info(`Received transfer-currency request:`, data);
+
+                try {
+                    const { user, shouldReturn } = resolveRequestUser(data, socketManager, "transfer-currency-result");
+                    if (shouldReturn) return;
+
+                    const { sourceActorUuid, sourceActorName, targetActorUuid, targetActorName, currency } = data;
+                    if (!sourceActorUuid && !sourceActorName) throw new Error("sourceActorUuid or sourceActorName is required");
+                    if (!targetActorUuid && !targetActorName) throw new Error("targetActorUuid or targetActorName is required");
+                    if (!currency || typeof currency !== 'object') throw new Error("currency object is required");
+
+                    const sourceActor = await resolveActor({ actorUuid: sourceActorUuid, actorName: sourceActorName });
+                    const targetActor = await resolveActor({ actorUuid: targetActorUuid, actorName: targetActorName });
+
+                    if (user) {
+                        assertWritePermission(sourceActor, user, "transfer currency from");
+                        assertWritePermission(targetActor, user, "transfer currency to");
+                    }
+
+                    const denominations = ['pp', 'gp', 'ep', 'sp', 'cp'];
+                    const sourceCurrency = sourceActor.system.currency || {};
+                    const targetCurrency = targetActor.system.currency || {};
+
+                    for (const denom of denominations) {
+                        const amount = currency[denom];
+                        if (amount && typeof amount === 'number' && amount > 0) {
+                            if ((sourceCurrency[denom] || 0) < amount) {
+                                throw new Error(`Insufficient ${denom}: ${sourceActor.name} has ${sourceCurrency[denom] || 0}, needs ${amount}`);
+                            }
+                        }
+                    }
+
+                    const sourceUpdate: any = {};
+                    const targetUpdate: any = {};
+                    for (const denom of denominations) {
+                        const amount = currency[denom];
+                        if (amount && typeof amount === 'number' && amount > 0) {
+                            sourceUpdate[`system.currency.${denom}`] = (sourceCurrency[denom] || 0) - amount;
+                            targetUpdate[`system.currency.${denom}`] = (targetCurrency[denom] || 0) + amount;
+                        }
+                    }
+
+                    await sourceActor.update(sourceUpdate);
+                    await targetActor.update(targetUpdate);
+
+                    socketManager?.send({
+                        type: "transfer-currency-result",
+                        requestId: data.requestId,
+                        data: {
+                            sourceActorUuid: sourceActor.uuid,
+                            targetActorUuid: targetActor.uuid,
+                            transferred: currency,
+                            sourceBalance: sourceActor.system.currency,
+                            targetBalance: targetActor.system.currency,
+                        },
+                    });
+                } catch (error) {
+                    ModuleLogger.error(`Error in transfer-currency:`, error);
+                    socketManager?.send({
+                        type: "transfer-currency-result",
                         requestId: data.requestId,
                         error: (error as Error).message,
                     });

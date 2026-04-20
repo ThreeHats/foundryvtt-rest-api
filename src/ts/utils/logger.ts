@@ -16,7 +16,7 @@ export class ModuleLogger {
    * Log a debug message (only when debug mode is enabled)
    */
   static debug(message: string, ...args: any[]): string {
-    if (this.debugLevel() < 1) {
+    if (this.debugLevel() <= 1) {
       console.log(`${moduleId} | ${message}`, ...args);
     }
     return message;
@@ -26,7 +26,7 @@ export class ModuleLogger {
    * Log info message (always shown)
    */
   static info(message: string, ...args: any[]): string {
-    if (this.debugLevel() < 2) {
+    if (this.debugLevel() <= 2) {
         console.log(`${moduleId} | ${message}`, ...args);
     }
     return message;
@@ -36,7 +36,7 @@ export class ModuleLogger {
    * Log warning message (always shown)
    */
   static warn(message: string, ...args: any[]): string {
-    if (this.debugLevel() < 3) {
+    if (this.debugLevel() <= 3) {
       console.warn(`${moduleId} | ${message}`, ...args);
     }
     return message;
@@ -46,7 +46,7 @@ export class ModuleLogger {
    * Log error message (always shown)
    */
   static error(message: string, ...args: any[]): string {
-    if (this.debugLevel() < 4) {
+    if (this.debugLevel() <= 4) {
         console.error(`${moduleId} | ${message}`, ...args);
     }
     return message;

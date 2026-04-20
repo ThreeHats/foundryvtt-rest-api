@@ -192,6 +192,7 @@ router.addRoute({
           for (const directory of directories) {
             currentPath = currentPath ? `${currentPath}/${directory}` : directory;
             try {
+              ModuleLogger.info(`Creating directory: ${currentPath}`);
               await getFilePicker().createDirectory(uploadSource, currentPath);
               ModuleLogger.info(`Created/verified directory: ${currentPath}`);
             } catch (createDirError) {
@@ -212,6 +213,7 @@ router.addRoute({
       let existingFile = null;
       try {
         const filePath = path && path !== '/' ? `${path}/${filename}` : filename;
+        ModuleLogger.info(`Checking if file already exists: ${filePath}`);
         existingFile = await getFilePicker().browse(uploadSource, filePath);
       } catch (e) {
         // File does not exist, which is fine
@@ -227,6 +229,7 @@ router.addRoute({
       formData.append("target", path);
       formData.append("upload", file);
 
+      ModuleLogger.info(`Uploading file via fetch to: ${foundry.utils.getRoute("upload")}`);
       const uploadResponse = await fetch(foundry.utils.getRoute("upload"), {
         method: "POST",
         body: formData

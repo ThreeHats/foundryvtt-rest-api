@@ -35,7 +35,7 @@ https://github.com/ThreeHats/foundryvtt-rest-api/releases/latest/download/module
 ### 2. Get an API Key
 
 **Option A: Public Relay (Easiest)**  
-Go to **[https://foundryvtt-rest-api-relay.fly.dev](https://foundryvtt-rest-api-relay.fly.dev)**, create an account, and copy your API key.
+Go to **[https://foundryrestapi.com](https://foundryrestapi.com)**, create an account, and copy your API key.
 
 **Option B: Self-Host**  
 See the [relay server documentation](https://github.com/ThreeHats/foundryvtt-rest-api-relay) to run your own instance.
@@ -44,13 +44,13 @@ See the [relay server documentation](https://github.com/ThreeHats/foundryvtt-res
 
 Enable the module in your world, then go to **Module Settings** and enter:
 - Your **API Key**
-- The **WebSocket Relay URL** (default: `wss://foundryvtt-rest-api-relay.fly.dev/`)
+- The **WebSocket Relay URL** (default: `wss://foundryrestapi.com/`)
 
 ### 4. Start Making API Calls
 
 ```bash
 # List connected worlds
-curl -X GET "https://foundryvtt-rest-api-relay.fly.dev/clients" \
+curl -X GET "https://foundryrestapi.com/clients" \
   -H "x-api-key: YOUR_API_KEY"
 ```
 
@@ -60,7 +60,7 @@ curl -X GET "https://foundryvtt-rest-api-relay.fly.dev/clients" \
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| **WebSocket Relay URL** | `wss://foundryvtt-rest-api-relay.fly.dev/` | Relay server WebSocket endpoint |
+| **WebSocket Relay URL** | `wss://foundryrestapi.com/` | Relay server WebSocket endpoint |
 | **API Key** | — | Your API key from the relay server |
 | **Log Level** | `info` | Controls module log verbosity (`debug`, `info`, `warn`, `error`) |
 | **Ping Interval** | `30` seconds | Keep-alive ping frequency |
@@ -86,7 +86,7 @@ curl -X GET "https://foundryvtt-rest-api-relay.fly.dev/clients" \
 
 ## Links
 
-- 📖 [API Documentation](https://foundryvtt-rest-api-relay.fly.dev/docs)
+- 📖 [API Documentation](https://foundryrestapi.com/docs)
 - 💬 [Discord Community](https://discord.gg/U634xNGRAC)
 - 🖥️ [Relay Server Repository](https://github.com/ThreeHats/foundryvtt-rest-api-relay)
 

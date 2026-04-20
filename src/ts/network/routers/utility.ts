@@ -1,6 +1,7 @@
 import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
 import { resolveRequestUser, assertGM } from "../../utils/permissions";
+import { moduleId, SETTINGS } from "../../constants";
 
 export const router = new Router("utilityRouter");
 
@@ -14,14 +15,29 @@ router.addRoute({
       const { user, shouldReturn } = resolveRequestUser(data, socketManager, "execute-js-result");
       if (shouldReturn) return;
 
+      // Module-level gate — GM must explicitly enable execute-js.
+      const allowExecuteJs = !!game.settings.get(moduleId, SETTINGS.ALLOW_EXECUTE_JS);
+      if (!allowExecuteJs) {
+        throw new Error("execute-js is disabled in REST API module settings. A GM must enable it to allow JavaScript execution.");
+      }
+
+      // Check code execution permission level
       if (user) {
-        assertGM(user, "execute JavaScript");
+        const requiredRole = (game.settings.get(moduleId, SETTINGS.CODE_EXECUTION_PERMISSION) as number) ?? 4;
+        if (user.role < requiredRole) {
+          throw new Error(`User ${user.name} does not have permission to execute code (requires role ${requiredRole}+)`);
+        }
       }
 
       const { script, requestId } = data;
 
       if (!script || typeof script !== "string") {
         throw new Error("Invalid script provided");
+      }
+
+      // Defense-in-depth: block scripts that modify this module's settings
+      if (script.includes('game.settings.set') && script.includes(moduleId)) {
+        throw new Error("Scripts cannot modify REST API module settings");
       }
 
       let result;
@@ -40,6 +56,23 @@ router.addRoute({
         success: true,
         result
       });
+
+      // In-Foundry GM whisper — relay handles Discord/email separately.
+      // Toggle via "Notify on Execute JS" module setting (default: on).
+      try {
+        if (!!game.settings.get(moduleId, SETTINGS.NOTIFY_ON_EXECUTE_JS)) {
+          const snippet = String(script).slice(0, 100);
+          const gmIds = (game.users?.filter((u: any) => u.isGM && u.active) ?? []).map((u: any) => u.id);
+          ChatMessage.create({
+            whisper: gmIds,
+            speaker: { alias: "REST API Module" } as any,
+            content: `<b>⚠ REST API execute-js:</b> <code>${snippet.replace(/</g, "&lt;")}</code>${script.length > 100 ? "…" : ""}`
+          });
+        }
+      } catch (notifyErr) {
+        ModuleLogger.warn(`Failed to post execute-js notification:`, notifyErr);
+      }
+
     } catch (error) {
       ModuleLogger.error(`Error in execute-js handler:`, error);
       socketManager?.send({
@@ -94,6 +127,68 @@ router.addRoute({
         requestId: data.requestId,
         error: (error as Error).message,
         users: []
+      });
+    }
+  }
+});
+
+router.addRoute({
+  actionType: "world-info",
+  handler: async (data, context) => {
+    const socketManager = context?.socketManager;
+    ModuleLogger.info(`Received world-info request`);
+
+    try {
+      const { shouldReturn } = resolveRequestUser(data, socketManager, "world-info-result");
+      if (shouldReturn) return;
+
+      const modules = (game.modules as any)?.map((m: any) => ({
+        id: m.id,
+        title: m.title,
+        version: m.version,
+        active: m.active,
+      })) || [];
+
+      const users = game.users?.contents.map((u: any) => ({
+        id: u.id,
+        name: u.name,
+        role: u.role,
+        isGM: u.isGM,
+        active: u.active,
+        color: u.color || null,
+        avatar: u.avatar || null,
+      })) || [];
+
+      const activeScene = game.scenes?.active;
+
+      socketManager?.send({
+        type: "world-info-result",
+        requestId: data.requestId,
+        data: {
+          world: {
+            id: (game.world as any).id,
+            title: (game.world as any).title,
+          },
+          system: {
+            id: game.system.id,
+            title: (game.system as any).title,
+            version: (game.system as any).version,
+          },
+          foundryVersion: game.version,
+          modules,
+          users,
+          activeScene: activeScene ? {
+            id: activeScene.id,
+            name: activeScene.name,
+          } : null,
+        },
+      });
+    } catch (error) {
+      ModuleLogger.error(`Error in world-info:`, error);
+      socketManager?.send({
+        type: "world-info-result",
+        requestId: data.requestId,
+        error: (error as Error).message,
       });
     }
   }

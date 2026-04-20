@@ -2,7 +2,7 @@
   "id": "foundry-rest-api",
   "title": "Foundry REST API",
   "description": "Adds rest endpoint to get data from FoundryVTT",
-  "version": "1.0.1",
+  "version": "3.0.0",
   "authors": [
       {
           "name": "ThreeHats",
@@ -26,5 +26,6 @@
   "styles": [
     "styles/style.css"
   ],
-  "esmodules": ["scripts/module.js"]
+  "esmodules": ["scripts/module.js"],
+  "socket": true
 }

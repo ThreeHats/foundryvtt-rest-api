@@ -1,6 +1,7 @@
 import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
 import { resolveRequestUser, hasPermission, assertWritePermission } from "../../utils/permissions";
+import { moduleId, SETTINGS } from "../../constants";
 
 export const router = new Router("macroRouter");
 
@@ -63,6 +64,12 @@ router.addRoute({
       const { user, shouldReturn } = resolveRequestUser(data, socketManager, "macro-execute-result");
       if (shouldReturn) return;
 
+      // Module-level gate — GM must explicitly enable macro-execute.
+      const allowMacroExecute = !!game.settings.get(moduleId, SETTINGS.ALLOW_MACRO_EXECUTE);
+      if (!allowMacroExecute) {
+        throw new Error("macro-execute is disabled in REST API module settings. A GM must enable it to allow macro execution.");
+      }
+
       if (!data.uuid) {
         throw new Error("Macro UUID is required");
       }
@@ -100,6 +107,22 @@ router.addRoute({
         success: true,
         result: typeof result === 'object' ? result : { value: result }
       });
+
+      // In-Foundry GM whisper — relay handles Discord/email separately.
+      // Toggle via "Notify on Macro Execute" module setting (default: on).
+      try {
+        if (!!game.settings.get(moduleId, SETTINGS.NOTIFY_ON_MACRO_EXECUTE)) {
+          const gmIds = (game.users?.filter((u: any) => u.isGM && u.active) ?? []).map((u: any) => u.id);
+          ChatMessage.create({
+            whisper: gmIds,
+            speaker: { alias: "REST API Module" } as any,
+            content: `<b>⚠ REST API macro-execute:</b> <code>${(macro.name || "").replace(/</g, "&lt;")}</code> (${data.uuid})`
+          });
+        }
+      } catch (notifyErr) {
+        ModuleLogger.warn(`Failed to post macro-execute notification:`, notifyErr);
+      }
+
     } catch (error) {
       ModuleLogger.error(`Error executing macro:`, error);
       socketManager?.send({

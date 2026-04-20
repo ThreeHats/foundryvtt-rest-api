@@ -1,6 +1,6 @@
 {
   "name": "foundry-rest-api",
-  "version": "1.8.1",
+  "version": "3.0.0",
   "description": "A REST API for Foundry VTT",
   "author": "ThreeHats",
   "license": "MIT",
@@ -26,6 +26,7 @@
   "dependencies": {
     "dotenv": "^16.6.1",
     "file-saver": "^2.0.5",
+    "html-to-image": "^1.11.13",
     "jszip": "^3.10.1"
   },
   "pnpm": {

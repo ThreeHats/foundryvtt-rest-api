@@ -19,8 +19,10 @@ router.addRoute({
       const path = data.path || null;
       const recursive = data.recursive ?? false;
       const recursiveDepth = data.recursiveDepth ?? 5;
-      const types = data.type ? (Array.isArray(data.types) ? data.types : [data.types]) :
-        ["Scene", "Actor", "Item", "JournalEntry", "RollTable", "Cards", "Macro", "Playlist"];
+      const rawTypes = data.types || data.type;
+      const types = rawTypes
+        ? (Array.isArray(rawTypes) ? rawTypes : String(rawTypes).split(",").map(t => t.trim()).filter(Boolean))
+        : ["Scene", "Actor", "Item", "JournalEntry", "RollTable", "Cards", "Macro", "Playlist"];
 
       // Type mapping for game collections
       const typeCollectionMap = {
@@ -254,7 +256,7 @@ router.addRoute({
                       uuid: (entry as any).uuid || `${pack.collection}.${entry._id}`,
                       name: entry.name,
                       id: entry._id,
-                      type: pack.documentName
+                      type: (entry as any).type || pack.documentName
                     };
                   }
                 });

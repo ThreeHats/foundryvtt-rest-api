@@ -101,7 +101,12 @@ describe('WebSocket Routes', () => {
       'download-file',
       'get-folder',
       'create-folder',
-      'delete-folder'
+      'delete-folder',
+      'get-users',
+      'get-user',
+      'create-user',
+      'update-user',
+      'delete-user'
     ];
     
     console.log('Registered routes:', mockSocketManager.onMessageType.mock.calls.map(call => call[0]));

@@ -1,32 +1,41 @@
 import "../styles/style.scss";
 import { FoundryRestApi } from "./types";
-import { moduleId, recentRolls, MAX_ROLLS_STORED, CONSTANTS, SETTINGS } from "./constants";
+import {
+  moduleId,
+  CONSTANTS,
+  SETTINGS,
+  FLAG_SKIP_SETUP_PROMPT,
+} from "./constants";
 import { ModuleLogger } from "./utils/logger";
 import { initializeWebSocket } from "./network/webSocketEndpoints";
-
-// Declare QuickInsert interface
-declare global {
-  interface Window {
-    QuickInsert: {
-      open: (context: any) => void;
-      search: (text: string, filter?: ((item: any) => boolean) | null, max?: number) => Promise<any[]>;
-      forceIndex: () => void;
-      handleKeybind: (event: KeyboardEvent, context: any) => void;
-      hasIndex: boolean;
-    };
-  }
-}
+import { openConnectionDialog, ConnectionSettingsApp } from "./utils/connectionDialog";
+import { notifyRelay } from "./utils/moduleNotify";
+import { remoteRequest, type RemoteRequestOptions } from "./network/remoteRequest";
+import { searchIndex, INDEXED_TYPES } from "./utils/searchIndex";
+import { parseFilterString } from "./utils/search";
 
 Hooks.once("init", () => {
   console.log(`Initializing ${moduleId}`);
-  
+
   for (let [name, data] of Object.entries(SETTINGS.GET_DEFAULT())) {
     game.settings.register(CONSTANTS.MODULE_ID, name, <any>data);
   }
 
+  // Register the Connection settings menu (GM only). Replaces the old
+  // renderSettingsConfig pairing UI.
+  (game.settings as any).registerMenu(CONSTANTS.MODULE_ID, "connectionSettings", {
+    name: "REST API Connection",
+    label: "Manage Connection",
+    hint: "Pair with relay, configure URL, set up Discord notifications.",
+    icon: "fas fa-link",
+    type: ConnectionSettingsApp,
+    restricted: true,
+  });
+
   // Create and expose module API
   const module = game.modules.get(moduleId) as FoundryRestApi;
   module.api = {
+    openConnectionDialog,
     getWebSocketManager: () => {
       if (!module.socketManager) {
         ModuleLogger.warn(`WebSocketManager requested but not initialized`);
@@ -35,27 +44,10 @@ Hooks.once("init", () => {
       return module.socketManager;
     },
     search: async (query: string, filter?: string) => {
-      if (!window.QuickInsert) {
-        ModuleLogger.error(`QuickInsert not available`);
-        return [];
-      }
-      
-      if (!window.QuickInsert.hasIndex) {
-        ModuleLogger.info(`QuickInsert index not ready, forcing index creation`);
-        try {
-          window.QuickInsert.forceIndex();
-          await new Promise(resolve => setTimeout(resolve, 500));
-        } catch (error) {
-          ModuleLogger.error(`Failed to force QuickInsert index:`, error);
-        }
-      }
-      
-      let filterFunc = null;
-      if (filter) {
-        filterFunc = (item: any) => item.documentType === filter;
-      }
-      
-      return window.QuickInsert.search(query, filterFunc, 100);
+      if (!searchIndex.isReady) searchIndex.build();
+      const filters = filter ? parseFilterString(filter) : undefined;
+      const results = await searchIndex.search(query, { filters, limit: 100 });
+      return results.map(r => r.entry);
     },
     getByUuid: async (uuid: string) => {
       try {
@@ -64,291 +56,297 @@ Hooks.once("init", () => {
         ModuleLogger.error(`Error getting entity by UUID:`, error);
         return null;
       }
-    }
+    },
+
+    // remoteRequest is the cross-world tunnel API. Other modules (like the
+    // server-to-server transfer module) call this to invoke actions on
+    // OTHER Foundry worlds owned by the same relay account, gated by what
+    // this browser's connection token explicitly allows.
+    //
+    // Example:
+    //   const restApi = game.modules.get("foundry-rest-api");
+    //   const result = await restApi.api.remoteRequest("fvtt_other_world",
+    //     "create-user", { name: "Alice", role: 1, password: "secret" });
+    //
+    // The Foundry module never holds an HTTP API key. Cross-world authority
+    // lives entirely in the connection token's allowedTargetClients +
+    // remoteScopes (configured at pair time via the relay dashboard).
+    remoteRequest: (targetClientId: string, action: string, payload?: Record<string, any>, opts?: RemoteRequestOptions) => {
+      return remoteRequest(module.socketManager ?? null, targetClientId, action, payload, opts);
+    },
   };
 });
 
-// Replace the API key input field with a password field
-Hooks.on("renderSettingsConfig", (_: SettingsConfig, html: JQuery | HTMLElement) => {
-  const htmlJQuery = html instanceof HTMLElement ? $(html) : html;
-  const apiKeyInput = htmlJQuery.find(`input[name="${moduleId}.apiKey"]`);
-  if (apiKeyInput.length) {
-    // Change the input type to password
-    apiKeyInput.attr("type", "password");
+// Legacy renderSettingsConfig pairing UI has been removed. Pairing is now
+// managed by the "Manage Connection" settings menu (ConnectionSettingsApp).
 
-    // Add a button to show the client ID
-    const showClientInfoButton = $('<button type="button" style="margin-left: 10px;"><i class="fas fa-info-circle"></i> Show Client Info</button>');
-    apiKeyInput.after(showClientInfoButton);
+// Detect sensitive settings changes and notify GMs + optionally Discord.
+Hooks.on("updateSetting", (setting: any) => {
+  const key: string | undefined = setting?.key;
+  if (!key || !key.startsWith(moduleId + ".")) return;
+  const settingName = key.substring(moduleId.length + 1);
+  const sensitiveKeys = [
+    "wsRelayUrl",
+    "allowExecuteJs",
+    "allowMacroExecute",
+  ];
+  if (!sensitiveKeys.includes(settingName)) return;
 
-    showClientInfoButton.on("click", () => {
-      const module = game.modules.get(moduleId) as FoundryRestApi;
-      const webSocketManager = module.api.getWebSocketManager();
-      if (webSocketManager) {
-        const clientId = webSocketManager.getClientId();
-        const worldId = game.world.id;
-        const worldTitle = (game.world as any).title;
-        const foundryVersion = game.version;
-        const systemId = game.system.id;
-        const systemTitle = (game.system as any).title || game.system.id;
-        const systemVersion = (game.system as any).version || 'unknown';
-        const customName = game.settings.get(moduleId, "customName") as string;
-        
-        new Dialog({
-          title: "Client Information",
-          content: `
-            <div class="form-group">
-                <label>Client ID</label>
-                <div class="form-fields">
-                    <input type="text" value="${clientId}" readonly>
-                </div>
-            </div>
-            <div class="form-group">
-                <label>World ID</label>
-                <div class="form-fields">
-                    <input type="text" value="${worldId}" readonly>
-                </div>
-            </div>
-            <div class="form-group">
-                <label>World Title</label>
-                <div class="form-fields">
-                    <input type="text" value="${worldTitle}" readonly>
-                </div>
-            </div>
-            <div class="form-group">
-                <label>Foundry Version</label>
-                <div class="form-fields">
-                    <input type="text" value="${foundryVersion}" readonly>
-                </div>
-            </div>
-            <div class="form-group">
-                <label>System ID</label>
-                <div class="form-fields">
-                    <input type="text" value="${systemId}" readonly>
-                </div>
-            </div>
-            <div class="form-group">
-                <label>System Title</label>
-                <div class="form-fields">
-                    <input type="text" value="${systemTitle}" readonly>
-                </div>
-            </div>
-            <div class="form-group">
-                <label>System Version</label>
-                <div class="form-fields">
-                    <input type="text" value="${systemVersion}" readonly>
-                </div>
-            </div>
-            <div class="form-group">
-                <label>Custom Name</label>
-                <div class="form-fields">
-                    <input type="text" value="${customName}" readonly>
-                </div>
-            </div>
-            <p class="notes">Click any field to copy its value.</p>
-          `,
-          buttons: {
-            ok: {
-              label: "OK"
-            }
-          },
-          render: (html: JQuery | HTMLElement) => {
-            const htmlJQuery = html instanceof HTMLElement ? $(html) : html;
-            const inputs = htmlJQuery.find('input[type="text"]');
-            inputs.css('cursor', 'pointer');
-            inputs.on('click', (event: JQuery.ClickEvent) => {
-              const input = event.currentTarget;
-              navigator.clipboard.writeText(input.value).then(() => {
-                ui.notifications.info(`Copied to clipboard.`);
-                input.select();
-              });
-            });
-          }
-        }).render(true);
-      } else {
-        ui.notifications.warn("WebSocketManager is not available.");
-      }
+  const gmUserIds = (game.users?.filter((u: any) => u.isGM && u.active) ?? []).map((u: any) => u.id);
+
+  try {
+    ChatMessage.create({
+      whisper: gmUserIds,
+      speaker: { alias: "REST API Module" } as any,
+      content: `<b>⚠ REST API setting changed:</b> <code>${settingName}</code> was modified by ${game.user?.name}`,
     });
-
-    // Add an event listener to save the value when it changes
-    apiKeyInput.on("change", (event) => {
-      const newValue = (event.target as HTMLInputElement).value;
-      game.settings.set(moduleId, "apiKey", newValue).then(() => {
-        new Dialog({
-          title: "Reload Required",
-          content: "<p>The API Key has been updated. A reload is required for the changes to take effect. Would you like to reload now?</p>",
-          buttons: {
-            yes: {
-              label: "Reload",
-              callback: () => window.location.reload()
-            },
-            no: {
-              label: "Later"
-            }
-          },
-          default: "yes"
-        }).render(true);
-      });
-    });
+  } catch (err) {
+    ModuleLogger.warn(`Failed to post settings-change chat message:`, err);
   }
 
-  // Handle custom name changes
-  const customNameInput = htmlJQuery.find(`input[name="${moduleId}.customName"]`);
-  if (customNameInput.length) {
-    customNameInput.on("change", (event) => {
-      const newValue = (event.target as HTMLInputElement).value;
-      game.settings.set(moduleId, "customName", newValue).then(() => {
-        new Dialog({
-          title: "Reload Required",
-          content: "<p>The Custom Name has been updated. A reload is required for the changes to take effect. Would you like to reload now?</p>",
-          buttons: {
-            yes: {
-              label: "Reload",
-              callback: () => window.location.reload()
-            },
-            no: {
-              label: "Later"
-            }
-          },
-          default: "yes"
-        }).render(true);
-      });
-    });
-  }
+  ui.notifications?.warn(`REST API setting "${settingName}" was changed`);
+
+  // Emit module-notify event to the relay; the relay's dispatcher routes it
+  // to the user's configured destinations (account-level Discord/email).
+  notifyRelay({
+    event: "settings-change",
+    details: `Setting \`${settingName}\` was changed`,
+  });
 });
 
-Hooks.once("ready", () => {
+Hooks.once("ready", async () => {
+  // One-time migration: rewrite the old Fly.io relay URL to the new domain.
+  // Self-hosted users (any URL that doesn't contain the old fly.dev host) are unaffected.
+  if (game.user?.isGM && game.user?.role === 4) {
+    const OLD_FLY_HOST = "foundryvtt-rest-api-relay.fly.dev";
+    const relayUrl = (game.settings.get(moduleId, SETTINGS.WS_RELAY_URL) as string) || "";
+    const pairedUrl = (game.settings.get(moduleId, SETTINGS.PAIRED_RELAY_URL) as string) || "";
+    let migrated = false;
+    if (relayUrl.includes(OLD_FLY_HOST)) {
+      await game.settings.set(moduleId, SETTINGS.WS_RELAY_URL, "wss://foundryrestapi.com");
+      migrated = true;
+    }
+    if (pairedUrl.includes(OLD_FLY_HOST)) {
+      await game.settings.set(moduleId, SETTINGS.PAIRED_RELAY_URL, "wss://foundryrestapi.com");
+      migrated = true;
+    }
+    if (migrated) {
+      ui.notifications?.info("REST API: Relay URL updated to foundryrestapi.com");
+      ModuleLogger.info("Migrated relay URL from old fly.dev host to foundryrestapi.com");
+    }
+  }
+
   setTimeout(() => {
+    searchIndex.build();
     initializeWebSocket();
   }, 1000);
-});
 
-Hooks.on("createChatMessage", (message: any) => {
-  if (message.isRoll && message.rolls?.length > 0) {
-    ModuleLogger.info(`Detected dice roll from ${message.author?.name || 'unknown'}`);
+  // Socket delegation: allow GMs whose browser doesn't hold the relay WS slot
+  // (e.g. received 4004 DuplicateConnection) to proxy operations through us.
+  // Only the GM whose socketManager.isConnected() responds; all others ignore.
+  (game.socket as any)?.on(`module.${moduleId}`, async (data: any) => {
+    if (!data || typeof data !== "object") return;
+    const mod = game.modules.get(moduleId) as FoundryRestApi;
+    if (!mod.socketManager?.isConnected()) return;
 
-    // Generate a unique ID using the message ID to prevent duplicates
-    const rollId = message.id;
+    const { type, delegateId } = data;
+    if (!delegateId) return;
 
-    // Format roll data
-    const rollData = {
-      id: rollId,
-      messageId: message.id,
-      user: {
-        id: message.author?.id,
-        name: message.author?.name
-      },
-      speaker: message.speaker,
-      flavor: message.flavor || "",
-      rollTotal: message.rolls[0].total,
-      formula: message.rolls[0].formula,
-      isCritical: message.rolls[0].isCritical || false,
-      isFumble: message.rolls[0].isFumble || false,
-      dice: message.rolls[0].dice?.map((d: any) => ({
-        faces: d.faces,
-        results: d.results.map((r: any) => ({
-          result: r.result,
-          active: r.active
-        }))
-      })),
-      timestamp: Date.now()
-    };
-    
-    // Check if this roll ID already exists in recentRolls
-    const existingIndex = recentRolls.findIndex(roll => roll.id === rollId);
-    if (existingIndex !== -1) {
-      // If it exists, update it instead of adding a new entry
-      recentRolls[existingIndex] = rollData;
-    } else {
-      // Add to recent rolls
-      recentRolls.unshift(rollData);
-      
-      // Trim the array if needed
-      if (recentRolls.length > MAX_ROLLS_STORED) {
-        recentRolls.length = MAX_ROLLS_STORED;
-      }
-    }
-    
-    // Send to relay server if connected
-    const module = game.modules.get(moduleId) as FoundryRestApi;
-    if (module.socketManager?.isConnected()) {
-      module.socketManager.send({
-        type: "roll-data",
-        data: rollData
+    const respond = (success: boolean, payload: any) => {
+      (game.socket as any).emit(`module.${moduleId}`, {
+        type: "ws-delegate-result",
+        delegateId,
+        success,
+        ...(success ? { data: payload } : { error: String(payload) }),
       });
+    };
+
+    if (type === "ws-send-and-wait") {
+      const { message, responseType, timeoutMs } = data;
+      let settled = false;
+      const timeout = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        respond(false, "Relay request timed out");
+      }, timeoutMs ?? 30_000);
+      mod.socketManager.onMessageType(responseType, (msg: any) => {
+        if (msg?.requestId !== message?.requestId) return;
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        respond(true, msg);
+      });
+      mod.socketManager.send(message);
+    }
+
+    if (type === "remoteRequest-delegate") {
+      const { targetClientId, action, payload, opts } = data;
+      try {
+        const result = await remoteRequest(mod.socketManager, targetClientId, action, payload, opts);
+        respond(true, result);
+      } catch (err) {
+        respond(false, (err as Error).message);
+      }
+    }
+  });
+
+  // Keep the search index in sync with world entity changes
+  for (const type of INDEXED_TYPES) {
+    Hooks.on(`create${type}`, (doc: any) => searchIndex.updateFromDocument(doc));
+    Hooks.on(`update${type}`, (doc: any) => searchIndex.updateFromDocument(doc));
+    Hooks.on(`delete${type}`, (doc: any) => searchIndex.removeWorldEntry(doc.uuid));
+  }
+
+  // Init wizard: prompt full GM to pair if no token is configured on
+  // this browser. Three branches:
+  //
+  //   1. localToken set, clientId set
+  //      → Browser is paired. Existing primary-GM logic decides whether
+  //        this user opens the WS connection. Already handled by
+  //        initializeWebSocket above.
+  //
+  //   2. clientId set in world settings, but localToken empty
+  //      → World is paired but THIS browser isn't. Probe the relay's
+  //        public /api/clients/:id/active endpoint to see if another GM
+  //        is currently holding the slot. If yes, stay silent (one
+  //        connection per world rule). If no, prompt to "add this
+  //        browser" via the Connection dialog.
+  //
+  //   3. clientId empty
+  //      → Fresh world, never paired. Prompt the GM to start the pairing
+  //        flow.
+  //
+  // The user flag `skipSetupPrompt` suppresses the prompt for THIS user
+  // only — other GMs in the same world still see it. (Per-user flags ARE
+  // broadcast to all clients, but a "skip the prompt" preference being
+  // readable is harmless.)
+  if (game.user?.isGM && game.user?.role === 4) {
+    const localToken = (game.settings.get(moduleId, SETTINGS.CONNECTION_TOKEN) as string) || "";
+    const clientId = (game.settings.get(moduleId, SETTINGS.CLIENT_ID) as string) || "";
+    const skip = !!game.user.getFlag(moduleId, FLAG_SKIP_SETUP_PROMPT);
+
+    if (localToken && clientId) {
+      // Already paired — initializeWebSocket above is doing the work.
+    } else if (clientId && !localToken) {
+      // World paired, this browser isn't. Check if another GM holds the slot.
+      void (async () => {
+        try {
+          const wsRelayUrl = game.settings.get(moduleId, SETTINGS.WS_RELAY_URL) as string;
+          // Derive the http(s) base from the wss:// relay URL
+          const httpBase = wsRelayUrl
+            .replace(/^wss:\/\//, "https://")
+            .replace(/^ws:\/\//, "http://")
+            .replace(/\/relay\/?$/, "");
+          const probeUrl = `${httpBase}/api/clients/${encodeURIComponent(clientId)}/active`;
+          let active = true; // fail-closed: if probe fails, stay silent
+          let worldUnregistered = false;
+          try {
+            const r = await fetch(probeUrl, { method: "GET" });
+            if (r.status === 404) {
+              // The relay has no record of this clientId — the world was removed
+              // from the dashboard. Clear the stale world-scope settings so the
+              // fresh-pair prompt is shown.
+              worldUnregistered = true;
+            } else if (r.ok) {
+              const body = await r.json();
+              active = !!body.active;
+            }
+          } catch {
+            // network error; treat as active to avoid nagging when relay is down
+          }
+
+          if (worldUnregistered) {
+            // Clear stale pairing data so fresh-pair prompt is shown on next load.
+            await game.settings.set(moduleId, SETTINGS.CLIENT_ID, "");
+            await game.settings.set(moduleId, SETTINGS.PAIRED_RELAY_URL, "");
+            ui.notifications?.warn("REST API: This world's relay registration was removed. Please re-pair.");
+            if (!skip) {
+              new Dialog({
+                title: "REST API — World No Longer Registered",
+                content: `
+                  <p>This world was registered with the relay, but that registration has been removed from the dashboard.</p>
+                  <p>Would you like to pair this world again? You'll need a new pairing code from the relay dashboard.</p>
+                `,
+                buttons: {
+                  pair: {
+                    icon: '<i class="fas fa-link"></i>',
+                    label: "Re-Pair Now",
+                    callback: () => openConnectionDialog()
+                  },
+                  later: { label: "Later" }
+                },
+                default: "pair"
+              }).render(true);
+            }
+            return;
+          }
+
+          if (active) {
+            ui.notifications?.info("REST API: connected via another GM's browser");
+            return;
+          }
+          if (skip) return;
+
+          new Dialog({
+            title: "REST API Setup — Add This Browser",
+            content: `
+              <p>This world is paired with the REST API relay (clientId: <code>${clientId}</code>),
+              but this browser isn't paired yet. No GM is currently holding the relay
+              connection slot.</p>
+              <p>Would you like to pair this browser so it can take over?
+              You'll need an "Add Browser" code from your relay dashboard's Known Clients page.</p>
+            `,
+            buttons: {
+              pair: {
+                icon: '<i class="fas fa-link"></i>',
+                label: "Pair This Browser",
+                callback: () => openConnectionDialog()
+              },
+              later: { label: "Later", callback: () => { /* no-op */ } },
+              never: {
+                label: "Don't Ask Again",
+                callback: async () => {
+                  await game.user?.setFlag(moduleId, FLAG_SKIP_SETUP_PROMPT, true);
+                }
+              }
+            },
+            default: "pair"
+          }).render(true);
+        } catch (err) {
+          ModuleLogger.warn("Init wizard probe failed:", err);
+        }
+      })();
+    } else {
+      // Fresh world (no clientId in world settings). Prompt to start the pair flow.
+      if (!skip) {
+        new Dialog({
+          title: "REST API Setup",
+          content: `
+            <p>The Foundry REST API module isn't connected to a relay yet.</p>
+            <p>Would you like to set it up now? You'll need a 6-character pairing code from the relay dashboard.</p>
+          `,
+          buttons: {
+            pair: {
+              icon: '<i class="fas fa-link"></i>',
+              label: "Pair Now",
+              callback: () => openConnectionDialog()
+            },
+            later: { label: "Later", callback: () => { /* no-op */ } },
+            never: {
+              label: "Don't Ask Again",
+              callback: async () => {
+                await game.user?.setFlag(moduleId, FLAG_SKIP_SETUP_PROMPT, true);
+              }
+            }
+          },
+          default: "pair"
+        }).render(true);
+      }
     }
   }
-
-  // Forward all chat messages as chat-event for SSE subscribers
-  const chatModule = game.modules.get(moduleId) as FoundryRestApi;
-  if (chatModule.socketManager?.isConnected()) {
-    chatModule.socketManager.send({
-      type: "chat-event",
-      data: {
-        eventType: "create",
-        data: serializeChatMessageForEvent(message)
-      }
-    });
-  }
 });
 
-Hooks.on("deleteChatMessage", (message: any) => {
-  const module = game.modules.get(moduleId) as FoundryRestApi;
-  if (module.socketManager?.isConnected()) {
-    module.socketManager.send({
-      type: "chat-event",
-      data: {
-        eventType: "delete",
-        data: { id: message.id }
-      }
-    });
-  }
-});
 
-Hooks.on("updateChatMessage", (message: any) => {
-  const module = game.modules.get(moduleId) as FoundryRestApi;
-  if (module.socketManager?.isConnected()) {
-    module.socketManager.send({
-      type: "chat-event",
-      data: {
-        eventType: "update",
-        data: serializeChatMessageForEvent(message)
-      }
-    });
-  }
-});
-
-/**
- * Serialize a chat message for SSE events.
- * Includes full roll details (dice, critical/fumble, individual results).
- */
-function serializeChatMessageForEvent(message: any): any {
-  return {
-    id: message.id,
-    uuid: message.uuid,
-    content: message.content,
-    speaker: message.speaker,
-    timestamp: message.timestamp,
-    whisper: message.whisper || [],
-    type: message.type,
-    author: message.author ? {
-      id: message.author.id,
-      name: message.author.name
-    } : null,
-    flavor: message.flavor || "",
-    isRoll: message.isRoll || false,
-    rolls: message.rolls?.map((r: any) => ({
-      formula: r.formula,
-      total: r.total,
-      isCritical: r.isCritical || false,
-      isFumble: r.isFumble || false,
-      dice: r.dice?.map((d: any) => ({
-        faces: d.faces,
-        results: d.results?.map((res: any) => ({
-          result: res.result,
-          active: res.active
-        })) || []
-      })) || []
-    })) || [],
-    flags: message.flags || {}
-  };
-}
+// Event hooks are registered on-demand via enableEventChannel / disableEventChannel
+// in response to "event-subscription-update" messages from the relay.
+// See src/ts/network/eventChannels.ts and webSocketEndpoints.ts.

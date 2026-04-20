@@ -96,6 +96,20 @@ export default defineConfig({
   ],
 });
 
+async function copyDirRecursive(src: string, dest: string): Promise<void> {
+  const entries = await fsPromises.readdir(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      await ensureDirectory(destPath);
+      await copyDirRecursive(srcPath, destPath);
+    } else {
+      await fsPromises.copyFile(srcPath, destPath);
+    }
+  }
+}
+
 function copyToAdditionalPathsPlugin(): Plugin {
   return {
     name: "copy-to-additional-paths",
@@ -106,15 +120,9 @@ function copyToAdditionalPathsPlugin(): Plugin {
       for (const p of foundryVttDataPaths.slice(1)) {
         const targetDir = path.join(p, moduleId, "scripts");
         await ensureDirectory(targetDir);
-        // Copy all files from primary scripts dir to additional paths
+        // Recursively copy all files and directories from primary scripts dir
         try {
-          const files = await fsPromises.readdir(primaryDir);
-          for (const file of files) {
-            await fsPromises.copyFile(
-              path.join(primaryDir, file),
-              path.join(targetDir, file)
-            );
-          }
+          await copyDirRecursive(primaryDir, targetDir);
         } catch (error) {
           console.error(`Error copying scripts to ${targetDir}:`, error);
         }
