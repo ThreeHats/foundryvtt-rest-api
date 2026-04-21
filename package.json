@@ -1,6 +1,6 @@
 {
   "name": "foundry-rest-api",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "A REST API for Foundry VTT",
   "author": "ThreeHats",
   "license": "MIT",
