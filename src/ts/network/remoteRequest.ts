@@ -51,14 +51,20 @@ export interface RemoteRequestOptions {
 // Error if anything fails.
 //
 // Common actions (the relay enforces ActionToScopeRequired in scopes.go):
-//   - "create"        → entity:write
-//   - "get"           → entity:read
-//   - "create-user"   → user:write  (creates a user with name/role/password)
-//   - "upload"        → file:write
-//   - "create-folder" → structure:write
-//   - "structure"     → structure:read
-//   - "users"         → user:read
-//   - "clients"       → clients:read
+//   - "create"          → entity:write
+//   - "entity"          → entity:read
+//   - "create-user"     → user:write  (creates a user with name/role/password)
+//   - "upload-file"     → file:write
+//   - "download-file"   → file:read
+//   - "file-system"     → file:read
+//   - "create-folder"   → structure:write
+//   - "structure"       → structure:read
+//   - "get-users"       → user:read
+//   - "macro-execute"   → macro:execute
+//   - "chat-messages"   → chat:read
+//   - "chat-send"       → chat:write
+//   - "get-scene"       → scene:read
+//   - "switch-scene"    → scene:write
 //
 // Example:
 //   const result = await module.api.remoteRequest("fvtt_other_world", "create-user", {

@@ -26,6 +26,8 @@ export class WebSocketManager {
   private connectionState: ConnectionState = 'disconnected';
   // true after receiving 4004 DuplicateConnection — cleared when we successfully connect
   private deferredByDuplicate: boolean = false;
+  // true once we've shown the "not connected" notification — suppresses repeat toasts during retries
+  private hasNotifiedDisconnected: boolean = false;
   // Polling timer used to periodically retry the slot when deferred by 4004.
   // Runs independently of reconnectTimer so it doesn't exhaust the reconnect budget.
   private deferredRetryTimer: number | null = null;
@@ -317,6 +319,7 @@ export class WebSocketManager {
     this.connectionState = 'connected';
     this.reconnectAttempts = 0;
     this.deferredByDuplicate = false;
+    this.hasNotifiedDisconnected = false;
     if (this.deferredRetryTimer !== null) {
       window.clearTimeout(this.deferredRetryTimer);
       this.deferredRetryTimer = null;
@@ -529,7 +532,14 @@ export class WebSocketManager {
     const baseDelay = game.settings.get(moduleId, SETTINGS.RECONNECT_BASE_DELAY) as number;
     
     this.reconnectAttempts++;
-    
+
+    if (this.reconnectAttempts === 1 && !this.hasNotifiedDisconnected) {
+      this.hasNotifiedDisconnected = true;
+      let relayHost = this.url;
+      try { relayHost = new URL(this.url).host; } catch { /* noop */ }
+      ui.notifications?.warn(`REST API: Not connected to ${relayHost}. Retrying...`);
+    }
+
     if (this.reconnectAttempts > maxAttempts) {
       ModuleLogger.error(`Maximum reconnection attempts (${maxAttempts}) reached`);
       this.reconnectAttempts = 0; // Reset for future disconnections

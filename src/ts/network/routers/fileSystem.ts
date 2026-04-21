@@ -133,7 +133,7 @@ router.addRoute({
         assertUserCan(uploadUser, "FILES_UPLOAD", "upload files");
       }
 
-      const { path, filename, source, fileData, mimeType, binaryData, overwrite } = data;
+      const { path, filename, source, fileData, mimeType, binaryData, overwrite, skipIfExists } = data;
 
       if (!path || !filename) {
         throw new Error("Missing required parameters (path, filename)");
@@ -223,17 +223,49 @@ router.addRoute({
         throw new Error("File already exists. Set overwrite to true to replace it.");
       }
 
-      // Upload the file using direct fetch to avoid FilePicker.upload() promise issues
+      // skipIfExists: caller only wants to ensure the file is present — if it's
+      // already there, skip the upload entirely. Used by the S2S transfer module
+      // to avoid Foundry's server-side /upload hang when overwriting existing files
+      // (Foundry v13 bug: mv() failure in async callback → Promise never resolves).
+      if (existingFile && skipIfExists) {
+        const existingPath = path && path !== '/' ? `${path}/${filename}` : filename;
+        ModuleLogger.info(`File already exists, skipping upload: ${existingPath}`);
+        socketManager?.send({
+          type: "upload-file-result",
+          requestId: data.requestId,
+          success: true,
+          path: existingPath,
+        });
+        return;
+      }
+
+      // Upload the file via direct fetch.
+      // AbortController guards against Foundry's server-side /upload endpoint hanging
+      // (Foundry v13: mv() callback throws on error, leaving the Promise unresolved).
       const formData = new FormData();
       formData.append("source", uploadSource);
       formData.append("target", path);
       formData.append("upload", file);
 
       ModuleLogger.info(`Uploading file via fetch to: ${foundry.utils.getRoute("upload")}`);
-      const uploadResponse = await fetch(foundry.utils.getRoute("upload"), {
-        method: "POST",
-        body: formData
-      });
+      const abortController = new AbortController();
+      const abortTimeout = setTimeout(() => {
+        ModuleLogger.warn(`Upload fetch timed out after 10s — aborting`);
+        abortController.abort();
+      }, 10_000);
+
+      let uploadResponse: Response;
+      try {
+        uploadResponse = await fetch(foundry.utils.getRoute("upload"), {
+          method: "POST",
+          body: formData,
+          signal: abortController.signal,
+        });
+      } finally {
+        clearTimeout(abortTimeout);
+      }
+
+      ModuleLogger.info(`Upload response: ${uploadResponse.status}`);
 
       if (!uploadResponse.ok) {
         const errorBody = await uploadResponse.text();
@@ -252,7 +284,7 @@ router.addRoute({
         path: uploadedPath
       });
     } catch (error) {
-      ModuleLogger.error(`Error uploading file:`, error);
+      ModuleLogger.warn(`Upload file failed:`, error);
       socketManager?.send({
         type: "upload-file-result",
         requestId: data.requestId,
