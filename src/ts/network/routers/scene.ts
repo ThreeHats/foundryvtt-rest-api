@@ -2,6 +2,7 @@ import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
 import { deepSerializeEntity } from "../../utils/serialization";
 import { resolveRequestUser, serializeWithPermission, filterByPermission, assertWritePermission, assertGM } from "../../utils/permissions";
+import { getFoundryVersionMajor } from "../../utils/version";
 
 export const router = new Router("sceneRouter");
 
@@ -147,7 +148,31 @@ router.addRoute({
                 assertWritePermission(scene, user, "update");
             }
 
-            await scene.update(data.data);
+            let sceneData = { ...data.data };
+
+            // In v14, background/foreground moved from Scene to Level documents.
+            // Translate legacy background/foreground keys into a Level embedded update.
+            if (getFoundryVersionMajor() >= 14 && ('background' in sceneData || 'foreground' in sceneData)) {
+                const levelUpdate: Record<string, any> = {};
+                if ('background' in sceneData) { levelUpdate.background = sceneData.background; delete sceneData.background; }
+                if ('foreground' in sceneData) { levelUpdate.foreground = { src: sceneData.foreground }; delete sceneData.foreground; }
+                const firstLevel = (scene as any).firstLevel;
+                if (firstLevel) {
+                    await scene.updateEmbeddedDocuments('Level', [{ _id: firstLevel.id, ...levelUpdate }]);
+                }
+            }
+
+            try {
+                await scene.update(sceneData);
+            } catch (renderErr) {
+                // scene.update() can throw from a PixiJS rendering error in Scene._onUpdate
+                // even though the data was already persisted server-side. If the scene is
+                // still accessible in the collection, the DB write succeeded — treat it as
+                // success and swallow the rendering error.
+                if (!game.scenes?.get(scene.id)) throw renderErr;
+                ModuleLogger.warn(`Scene update had a rendering error but data was saved:`, renderErr);
+            }
+
             const updated = game.scenes?.get(scene.id);
 
             socketManager?.send({

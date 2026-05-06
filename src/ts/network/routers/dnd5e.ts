@@ -55,6 +55,94 @@ Hooks.once('init', () => {
                         results.features = actor.items.filter((i: any) => ['feat', 'background', 'class'].includes(i.type));
                     }
 
+                    if (details.includes("stats")) {
+                        const classItems = actor.items.filter((i: any) => i.type === 'class');
+                        const level = classItems.reduce((sum: number, i: any) => sum + (i.system.levels ?? 0), 0);
+                        results.stats = {
+                            name: actor.name,
+                            img: actor.img,
+                            uuid: actor.uuid,
+                            level,
+                            profBonus: actor.system.attributes.prof ?? 2,
+                            ac: actor.system.attributes.ac.value ?? actor.system.attributes.ac.flat ?? 10,
+                            hp: {
+                                value: actor.system.attributes.hp.value,
+                                max: actor.system.attributes.hp.max,
+                                temp: actor.system.attributes.hp.temp ?? 0,
+                            },
+                            speed: actor.system.attributes.movement.walk ?? 0,
+                            exhaustion: actor.system.attributes.exhaustion ?? 0,
+                            inspiration: actor.system.attributes.inspiration ?? false,
+                        };
+                    }
+
+                    if (details.includes("abilities")) {
+                        results.abilities = {};
+                        for (const key of ['str', 'dex', 'con', 'int', 'wis', 'cha']) {
+                            const ab = actor.system.abilities[key];
+                            // dnd5e v3: ab.save is a number; v4+: ab.save is { value, ... }
+                            const saveVal = typeof ab.save === 'object' ? (ab.save as any)?.value ?? 0 : (ab.save ?? 0);
+                            results.abilities[key] = {
+                                value: ab.value,
+                                mod: ab.mod,
+                                save: saveVal,
+                                proficient: ab.proficient,
+                            };
+                        }
+                    }
+
+                    if (details.includes("skills")) {
+                        results.skills = {};
+                        for (const [key, skill] of Object.entries(actor.system.skills as Record<string, any>)) {
+                            results.skills[key] = {
+                                ability: skill.ability,
+                                total: skill.total,
+                                mod: skill.mod,
+                                value: skill.value,
+                                passive: skill.passive,
+                            };
+                        }
+                    }
+
+                    if (details.includes("details")) {
+                        const d = actor.system.details;
+                        const raceItem = actor.items.find((i: any) => i.type === 'race');
+                        const bgItem = actor.items.find((i: any) => i.type === 'background');
+                        const classNames = actor.items
+                            .filter((i: any) => i.type === 'class')
+                            .map((i: any) => i.name)
+                            .join('/');
+                        results.details = {
+                            race: raceItem?.name ?? '?',
+                            background: bgItem?.name ?? '?',
+                            class: classNames || '?',
+                            alignment: d.alignment ?? '',
+                            biography: d.biography?.value ?? '',
+                            age: d.age ?? '',
+                            height: d.height ?? '',
+                            weight: d.weight ?? '',
+                            eyes: d.eyes ?? '',
+                            skin: d.skin ?? '',
+                            hair: d.hair ?? '',
+                            faith: d.faith ?? '',
+                            gender: d.gender ?? '',
+                        };
+                    }
+
+                    if (details.includes("conditions")) {
+                        const statusIds: string[] = actor.statuses ? [...actor.statuses] : [];
+                        results.conditions = statusIds.map((id: string) => {
+                            const statusConfig = (CONFIG as any).statusEffects?.find((s: any) => s.id === id);
+                            return { id, name: statusConfig?.name ?? id };
+                        });
+                        const concEffect = actor.effects.find((e: any) =>
+                            e.statuses?.has?.('concentrating') || e.statuses?.has?.('concentration')
+                        );
+                        results.concentration = concEffect
+                            ? { active: true, name: concEffect.name }
+                            : { active: false };
+                    }
+
                     socketManager?.send({
                         type: "get-actor-details-result",
                         requestId: data.requestId,
@@ -1148,6 +1236,92 @@ Hooks.once('init', () => {
                         requestId: data.requestId,
                         error: (error as Error).message,
                     });
+                }
+            }
+        });
+
+        router.addRoute({
+            actionType: "modify-currency",
+            handler: async (data: any, context: any) => {
+                const socketManager = context?.socketManager;
+                ModuleLogger.info(`Received modify-currency request:`, data);
+                try {
+                    const { shouldReturn } = resolveRequestUser(data, socketManager, "modify-currency-result");
+                    if (shouldReturn) return;
+
+                    const actorUuid = data.uuid || data.actorUuid;
+                    const currency: string = data.currency;
+                    const amount: number = data.amount;
+
+                    if (!actorUuid || !currency || amount === undefined) {
+                        socketManager?.send({ type: "modify-currency-result", requestId: data.requestId, error: "Missing required params: uuid, currency, amount" });
+                        return;
+                    }
+
+                    const actor = await fromUuid(actorUuid);
+                    if (!actor || !("system" in actor)) {
+                        socketManager?.send({ type: "modify-currency-result", requestId: data.requestId, error: `Actor not found: ${actorUuid}` });
+                        return;
+                    }
+
+                    const currentAmount: number = (actor as any).system?.currency?.[currency] || 0;
+                    const newAmount = Math.max(0, currentAmount + amount);
+                    await (actor as any).update({ [`system.currency.${currency}`]: newAmount });
+
+                    socketManager?.send({
+                        type: "modify-currency-result",
+                        requestId: data.requestId,
+                        data: { currency, previous: currentAmount, current: newAmount, delta: amount },
+                    });
+                } catch (error) {
+                    ModuleLogger.error(`Error in modify-currency:`, error);
+                    socketManager?.send({ type: "modify-currency-result", requestId: data.requestId, error: (error as Error).message });
+                }
+            }
+        });
+
+        router.addRoute({
+            actionType: "prepare-spell",
+            handler: async (data: any, context: any) => {
+                const socketManager = context?.socketManager;
+                ModuleLogger.info(`Received prepare-spell request:`, data);
+                try {
+                    const { shouldReturn } = resolveRequestUser(data, socketManager, "prepare-spell-result");
+                    if (shouldReturn) return;
+
+                    const actorUuid = data.uuid || data.actorUuid;
+                    const spellName: string = data.spellName || data.name;
+                    const prepared: boolean = data.prepared;
+
+                    if (!actorUuid || !spellName || prepared === undefined) {
+                        socketManager?.send({ type: "prepare-spell-result", requestId: data.requestId, error: "Missing required params: uuid, spellName, prepared" });
+                        return;
+                    }
+
+                    const actor = await fromUuid(actorUuid);
+                    if (!actor || !("items" in actor)) {
+                        socketManager?.send({ type: "prepare-spell-result", requestId: data.requestId, error: `Actor not found: ${actorUuid}` });
+                        return;
+                    }
+
+                    const spell = (actor as any).items.find((i: any) =>
+                        i.type === "spell" && i.name.toLowerCase() === spellName.toLowerCase()
+                    );
+                    if (!spell) {
+                        socketManager?.send({ type: "prepare-spell-result", requestId: data.requestId, error: `Spell not found: ${spellName}` });
+                        return;
+                    }
+
+                    await spell.update({ "system.preparation.prepared": prepared });
+
+                    socketManager?.send({
+                        type: "prepare-spell-result",
+                        requestId: data.requestId,
+                        data: { spellName: spell.name, prepared, uuid: spell.uuid },
+                    });
+                } catch (error) {
+                    ModuleLogger.error(`Error in prepare-spell:`, error);
+                    socketManager?.send({ type: "prepare-spell-result", requestId: data.requestId, error: (error as Error).message });
                 }
             }
         });

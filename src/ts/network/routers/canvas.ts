@@ -16,7 +16,8 @@ const COLLECTION_MAP: Record<string, string> = {
     sounds: "sounds",
     notes: "notes",
     templates: "templates",
-    walls: "walls"
+    walls: "walls",
+    regions: "regions",
 };
 
 /**

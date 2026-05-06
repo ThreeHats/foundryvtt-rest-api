@@ -609,7 +609,10 @@ router.addRoute({
           }
 
           try {
-            const deadEffect = CONFIG.statusEffects?.find(e =>
+            const effects = CONFIG.statusEffects;
+            // v14 changed CONFIG.statusEffects from Array to Object keyed by ID
+            const effectList: any[] = Array.isArray(effects) ? effects : Object.values(effects ?? {});
+            const deadEffect = effectList.find(e =>
               e.id === "dead" || e.id === "unconscious" || e.id === "defeated"
             );
 
@@ -635,7 +638,9 @@ router.addRoute({
 
             for (const token of tokens) {
               try {
-                const deadEffect = CONFIG.statusEffects?.find(e =>
+                const effects = CONFIG.statusEffects;
+                const effectList: any[] = Array.isArray(effects) ? effects : Object.values(effects ?? {});
+                const deadEffect = effectList.find(e =>
                   e.id === "dead" || e.id === "unconscious" || e.id === "defeated"
                 );
 

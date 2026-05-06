@@ -2,7 +2,7 @@ import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
 import { parseFilterString } from "../../utils/search";
 import { searchIndex } from "../../utils/searchIndex";
-import { resolveRequestUser, hasPermission } from "../../utils/permissions";
+import { resolveRequestUser, hasPermission, resolveUser } from "../../utils/permissions";
 
 export const router = new Router("searchRouter");
 
@@ -61,6 +61,12 @@ router.addRoute({
         })
       );
 
+      // Filter by owner if ownedByUserId is specified (e.g. bot requesting actors for a specific player)
+      let ownerUser: any = null;
+      if (data.ownedByUserId) {
+        ownerUser = resolveUser(data.ownedByUserId);
+      }
+
       const mappedResults: any[] = [];
       const seenUUIDs = new Set<string>();
 
@@ -68,6 +74,15 @@ router.addRoute({
         if (!include) continue;
         if (entry.uuid && seenUUIDs.has(entry.uuid)) continue;
         if (entry.uuid) seenUUIDs.add(entry.uuid);
+
+        if (ownerUser) {
+          try {
+            const doc = await fromUuid(entry.uuid);
+            if (!doc || !hasPermission(doc, ownerUser, "OWNER")) continue;
+          } catch {
+            continue;
+          }
+        }
 
         if (minified || limited) {
           mappedResults.push({
