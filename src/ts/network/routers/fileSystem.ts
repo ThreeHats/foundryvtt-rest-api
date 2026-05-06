@@ -224,9 +224,7 @@ router.addRoute({
       }
 
       // skipIfExists: caller only wants to ensure the file is present — if it's
-      // already there, skip the upload entirely. Used by the S2S transfer module
-      // to avoid Foundry's server-side /upload hang when overwriting existing files
-      // (Foundry v13 bug: mv() failure in async callback → Promise never resolves).
+      // already there, skip the upload entirely.
       if (existingFile && skipIfExists) {
         const existingPath = path && path !== '/' ? `${path}/${filename}` : filename;
         ModuleLogger.info(`File already exists, skipping upload: ${existingPath}`);
@@ -241,7 +239,6 @@ router.addRoute({
 
       // Upload the file via direct fetch.
       // AbortController guards against Foundry's server-side /upload endpoint hanging
-      // (Foundry v13: mv() callback throws on error, leaving the Promise unresolved).
       const formData = new FormData();
       formData.append("source", uploadSource);
       formData.append("target", path);

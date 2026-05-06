@@ -235,7 +235,11 @@ router.addRoute({
 
             const scene = resolveSceneForImage(sceneId, active);
 
-            const backgroundSrc = scene.background?.src || scene.img || null;
+            // In v14, scene.background is a deprecated shim that reads from firstLevel.background.
+            // Fall through to firstLevel explicitly in case the shim returns an empty object.
+            const backgroundSrc = scene.background?.src
+                || (scene as any).firstLevel?.background?.src
+                || scene.img || null;
             if (!backgroundSrc) {
                 throw new Error(`Scene '${scene.name}' has no background image`);
             }
