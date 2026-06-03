@@ -5,6 +5,70 @@ import { resolveRequestUser, serializeWithPermission, filterByPermission, assert
 import { moduleId, SETTINGS } from "../../constants";
 import { searchIndex } from "../../utils/searchIndex";
 
+// Document.update() upserts embedded docs by _id but never deletes ones absent from
+// the incoming array, so a fullSync needs to reconcile removals explicitly.
+
+// Maps each of a document's embedded collection fields to its document type, read from
+// the document's own metadata so every type is covered and each field resolves correctly
+// (a Scene's `sounds` are AmbientSound; a Playlist's are PlaylistSound).
+function embeddedFieldMap(entity: any): Record<string, string> {
+  const embedded = (entity?.constructor as any)?.metadata?.embedded ?? {};
+  const map: Record<string, string> = {};
+  for (const [docType, fieldName] of Object.entries(embedded)) {
+    if (typeof fieldName === "string") map[fieldName] = docType;
+  }
+  return map;
+}
+
+// Docs the system re-derives every cycle (e.g. item-transferred ActiveEffects) are
+// legitimately absent from a source payload; never reconcile-delete them.
+function isDerivedEmbedded(doc: any): boolean {
+  return !!doc?.transfer || (!!doc?.origin && doc?.origin !== doc?.parent?.uuid);
+}
+
+// Snapshot of embedded ids per field, taken before an update to compare against.
+function snapshotEmbeddedIds(entity: any): Record<string, Set<string>> {
+  const snap: Record<string, Set<string>> = {};
+  for (const field of Object.keys(embeddedFieldMap(entity))) {
+    const collection = entity[field];
+    if (typeof collection?.keys === "function") snap[field] = new Set<string>(collection.keys());
+  }
+  return snap;
+}
+
+// Deletes embedded docs the source removed. Skips fields whose update() threw, id-less
+// (untrustworthy) arrays, and system-derived docs — i.e. anything not genuinely removed.
+async function reconcileEmbeddedDocs(
+  entity: any,
+  incomingData: any,
+  opts: any,
+  priorIds: Record<string, Set<string>>,
+  failedFields: Set<string>,
+): Promise<void> {
+  for (const [field, docType] of Object.entries(embeddedFieldMap(entity))) {
+    const before = priorIds[field];
+    const incoming = incomingData[field];
+    if (failedFields.has(field) || !before?.size || !Array.isArray(incoming)) continue;
+    const incomingIds = new Set(incoming.map((e: any) => e._id ?? e.id).filter(Boolean));
+    if (incoming.length > 0 && incomingIds.size === 0) continue;
+    const toDelete = [...before].filter((id: string) => {
+      const doc = entity[field]?.get(id);
+      return doc && !incomingIds.has(id) && !isDerivedEmbedded(doc);
+    });
+    if (!toDelete.length) continue;
+    try {
+      await entity.deleteEmbeddedDocuments(docType, toDelete, opts);
+    } catch {
+      // Tolerate per-id failures (e.g. a concurrent removal) so one can't abort the rest.
+      for (const id of toDelete) {
+        if (entity[field]?.get(id)) {
+          try { await entity.deleteEmbeddedDocuments(docType, [id], opts); } catch { /* ignore */ }
+        }
+      }
+    }
+  }
+}
+
 export const router = new Router("entityRouter");
 
 /**
@@ -157,8 +221,12 @@ router.addRoute({
       };
 
       const createOptions: any = {};
-      if (data.keepId && createData._id) {
-        createOptions.keepId = true;
+      if (data.fullSync) createOptions.fullSync = true;
+      if (data.keepId && createData._id) createOptions.keepId = true;
+
+      // An incoming id that already exists is updated in place rather than re-created
+      // (create() with keepId throws on a taken id; without keepId it mints a duplicate).
+      if (createData._id) {
         const collection = game.collections.get(data.entityType);
         const existing = collection?.get(createData._id);
         if (existing && !data.override) {
@@ -167,6 +235,54 @@ router.addRoute({
             requestId: data.requestId,
             error: `Entity with ID '${createData._id}' already exists. Set override=true to replace it.`,
             message: "Failed to create entity"
+          });
+          return;
+        }
+        if (existing && data.override) {
+          // This path updates and deletes embedded docs, so it needs modify rights.
+          if (user && !user.isGM && !(existing as any).canUserModify?.(user, "update")) {
+            socketManager?.send({
+              type: "create-result",
+              requestId: data.requestId,
+              error: `User '${user.name}' does not have permission to modify ${data.entityType} '${createData._id}'`,
+              message: "Failed to create entity"
+            });
+            return;
+          }
+
+          const updateData: any = { ...createData };
+          delete updateData._id;
+          const updateOpts: any = {};
+          if (data.fullSync) updateOpts.fullSync = true;
+
+          const embeddedFields = new Set(Object.keys(embeddedFieldMap(existing)));
+          const priorIds = data.fullSync ? snapshotEmbeddedIds(existing) : {};
+
+          // Apply core fields, then each embedded collection separately so one failing
+          // embedded array can't roll back the whole (atomic) update.
+          const coreData: any = {};
+          const embeddedData: any = {};
+          for (const [k, v] of Object.entries(updateData)) {
+            if (Array.isArray(v) && embeddedFields.has(k)) embeddedData[k] = v;
+            else coreData[k] = v;
+          }
+          await (existing as any).update(coreData, updateOpts);
+          // Failed fields are excluded from reconcile so it can't delete unreplaced docs.
+          const failedFields = new Set<string>();
+          for (const [field, arr] of Object.entries(embeddedData)) {
+            try {
+              await (existing as any).update({ [field]: arr }, updateOpts);
+            } catch (e) {
+              failedFields.add(field);
+              ModuleLogger.debug(`embedded "${field}" apply failed for ${createData._id}: ${(e as Error).message}`);
+            }
+          }
+          if (data.fullSync) await reconcileEmbeddedDocs(existing as any, updateData, updateOpts, priorIds, failedFields);
+          socketManager?.send({
+            type: "create-result",
+            requestId: data.requestId,
+            uuid: (existing as any).uuid,
+            entity: (existing as any).toObject()
           });
           return;
         }

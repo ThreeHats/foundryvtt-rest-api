@@ -20,6 +20,8 @@ export interface FoundryRestApi extends Game.ModuleData<any> {
 
 export interface FoundryRestApiAPI {
   getWebSocketManager: () => WebSocketManager | null;
+  /** Returns true when THIS browser holds the relay WebSocket connection. */
+  isRelayConnected: () => boolean;
   search: (query: string, filter?: string) => Promise<any[]>;
   getByUuid: (uuid: string) => Promise<any>;
   openConnectionDialog: () => void;

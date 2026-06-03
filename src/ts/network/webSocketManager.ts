@@ -320,6 +320,7 @@ export class WebSocketManager {
     this.reconnectAttempts = 0;
     this.deferredByDuplicate = false;
     this.hasNotifiedDisconnected = false;
+    Hooks.callAll("foundry-rest-api.relayConnected", this.clientId);
     if (this.deferredRetryTimer !== null) {
       window.clearTimeout(this.deferredRetryTimer);
       this.deferredRetryTimer = null;
@@ -394,6 +395,9 @@ export class WebSocketManager {
     // Only show disconnect notifications when a live connection actually dropped.
     // Suppress during initial connect/reconnect attempts so a relay that isn't
     // running doesn't spam the GM with a notification on every retry.
+    if (wasConnected) {
+      Hooks.callAll("foundry-rest-api.relayDisconnected");
+    }
     if (wasConnected && event.code !== WSCloseCodes.Normal) {
       let relayHost = this.url;
       try { relayHost = new URL(this.url).host; } catch { /* noop */ }
@@ -440,6 +444,7 @@ export class WebSocketManager {
       ui.notifications?.info(`REST API: connected via another GM's browser`);
       this.deferredByDuplicate = true;
       this.scheduleDeferredRetry();
+      Hooks.callAll("foundry-rest-api.relayDeferred");
       return;
     }
 

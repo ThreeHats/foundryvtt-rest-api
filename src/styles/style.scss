@@ -55,3 +55,17 @@
     word-break: break-all;
     overflow-wrap: break-word;
 }
+
+// Keep the connection dialog's many footer buttons on a single row in every
+// Foundry version. V12 gives footer buttons a 180px min-width (7 × 180px
+// overflows the 560px window), so lift it and let buttons shrink to content;
+// nowrap on the footer overrides V13's wrapping default, and nowrap labels
+// stop multi-word buttons from breaking onto two lines as they shrink.
+.application.dialog.rest-api-connection-dialog .standard-form .form-footer {
+    flex-wrap: nowrap;
+
+    > button {
+        min-width: unset;
+        white-space: nowrap;
+    }
+}

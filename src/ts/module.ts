@@ -38,11 +38,15 @@ Hooks.once("init", () => {
     openConnectionDialog,
     getWebSocketManager: () => {
       if (!module.socketManager) {
-        ModuleLogger.warn(`WebSocketManager requested but not initialized`);
+        ModuleLogger.warn(`WebSocketManager not initialized — this browser has no relay token. Use "Manage Connection" to pair, or check that another GM's browser is connected.`);
         return null;
+      }
+      if (!module.socketManager.isConnected()) {
+        ModuleLogger.debug(`WebSocketManager exists but not connected — relay slot may be held by another GM's browser.`);
       }
       return module.socketManager;
     },
+    isRelayConnected: () => !!module.socketManager?.isConnected(),
     search: async (query: string, filter?: string) => {
       if (!searchIndex.isReady) searchIndex.build();
       const filters = filter ? parseFilterString(filter) : undefined;
@@ -58,9 +62,9 @@ Hooks.once("init", () => {
       }
     },
 
-    // remoteRequest is the cross-world tunnel API. Other modules (like the
-    // server-to-server transfer module) call this to invoke actions on
-    // OTHER Foundry worlds owned by the same relay account, gated by what
+    // remoteRequest is the cross-world tunnel API. Other modules call this
+    // to invoke actions on OTHER Foundry worlds owned by the same relay
+    // account, gated by what
     // this browser's connection token explicitly allows.
     //
     // Example:
@@ -238,7 +242,8 @@ Hooks.once("ready", async () => {
             .replace(/^ws:\/\//, "http://")
             .replace(/\/relay\/?$/, "");
           const probeUrl = `${httpBase}/api/clients/${encodeURIComponent(clientId)}/active`;
-          let active = true; // fail-closed: if probe fails, stay silent
+          let active = false;
+          let probeFailed = false;
           let worldUnregistered = false;
           try {
             const r = await fetch(probeUrl, { method: "GET" });
@@ -248,11 +253,16 @@ Hooks.once("ready", async () => {
               // fresh-pair prompt is shown.
               worldUnregistered = true;
             } else if (r.ok) {
-              const body = await r.json();
+              const body = await r.json().catch(() => ({} as any));
               active = !!body.active;
+            } else {
+              // Non-404 error (e.g. transient 5xx) — can't verify state, treat as unreachable.
+              probeFailed = true;
             }
           } catch {
-            // network error; treat as active to avoid nagging when relay is down
+            // Network error — relay unreachable. Don't show a false-positive
+            // "connected via another GM's browser" when we can't verify the state.
+            probeFailed = true;
           }
 
           if (worldUnregistered) {
@@ -261,23 +271,22 @@ Hooks.once("ready", async () => {
             await game.settings.set(moduleId, SETTINGS.PAIRED_RELAY_URL, "");
             ui.notifications?.warn("REST API: This world's relay registration was removed. Please re-pair.");
             if (!skip) {
-              new Dialog({
-                title: "REST API — World No Longer Registered",
-                content: `
-                  <p>This world was registered with the relay, but that registration has been removed from the dashboard.</p>
-                  <p>Would you like to pair this world again? You'll need a new pairing code from the relay dashboard.</p>
-                `,
-                buttons: {
-                  pair: {
-                    icon: '<i class="fas fa-link"></i>',
-                    label: "Re-Pair Now",
-                    callback: () => openConnectionDialog()
-                  },
-                  later: { label: "Later" }
-                },
-                default: "pair"
+              new (foundry as any).applications.api.DialogV2({
+                window: { title: "REST API - World Not Found" },
+                content: `<p>This world's relay pairing was removed. Re-pair to reconnect.</p>`,
+                buttons: [
+                  { action: "pair", icon: 'fas fa-link', label: "Re-Pair", default: true, callback: () => openConnectionDialog() },
+                  { action: "later", label: "Later" },
+                ],
               }).render(true);
             }
+            return;
+          }
+
+          if (probeFailed) {
+            // Relay unreachable — can't verify state, so stay silent rather
+            // than show a misleading "connected via another GM's browser" toast.
+            ModuleLogger.warn(`REST API relay unreachable (${probeUrl}); can't confirm whether another GM is connected.`);
             return;
           }
 
@@ -287,30 +296,14 @@ Hooks.once("ready", async () => {
           }
           if (skip) return;
 
-          new Dialog({
-            title: "REST API Setup — Add This Browser",
-            content: `
-              <p>This world is paired with the REST API relay (clientId: <code>${clientId}</code>),
-              but this browser isn't paired yet. No GM is currently holding the relay
-              connection slot.</p>
-              <p>Would you like to pair this browser so it can take over?
-              You'll need an "Add Browser" code from your relay dashboard's Known Clients page.</p>
-            `,
-            buttons: {
-              pair: {
-                icon: '<i class="fas fa-link"></i>',
-                label: "Pair This Browser",
-                callback: () => openConnectionDialog()
-              },
-              later: { label: "Later", callback: () => { /* no-op */ } },
-              never: {
-                label: "Don't Ask Again",
-                callback: async () => {
-                  await game.user?.setFlag(moduleId, FLAG_SKIP_SETUP_PROMPT, true);
-                }
-              }
-            },
-            default: "pair"
+          new (foundry as any).applications.api.DialogV2({
+            window: { title: "REST API - Pair" },
+            content: `<p>This world is connected to the relay, but this browser isn't paired yet.</p>`,
+            buttons: [
+              { action: "pair", icon: 'fas fa-link', label: "Pair", default: true, callback: () => openConnectionDialog() },
+              { action: "later", label: "Later" },
+              { action: "never", label: "Don't Ask Again", callback: async () => { await game.user?.setFlag(moduleId, FLAG_SKIP_SETUP_PROMPT, true); } },
+            ],
           }).render(true);
         } catch (err) {
           ModuleLogger.warn("Init wizard probe failed:", err);
@@ -319,27 +312,14 @@ Hooks.once("ready", async () => {
     } else {
       // Fresh world (no clientId in world settings). Prompt to start the pair flow.
       if (!skip) {
-        new Dialog({
-          title: "REST API Setup",
-          content: `
-            <p>The Foundry REST API module isn't connected to a relay yet.</p>
-            <p>Would you like to set it up now? You'll need a 6-character pairing code from the relay dashboard.</p>
-          `,
-          buttons: {
-            pair: {
-              icon: '<i class="fas fa-link"></i>',
-              label: "Pair Now",
-              callback: () => openConnectionDialog()
-            },
-            later: { label: "Later", callback: () => { /* no-op */ } },
-            never: {
-              label: "Don't Ask Again",
-              callback: async () => {
-                await game.user?.setFlag(moduleId, FLAG_SKIP_SETUP_PROMPT, true);
-              }
-            }
-          },
-          default: "pair"
+        new (foundry as any).applications.api.DialogV2({
+          window: { title: "REST API - Setup" },
+          content: `<p>Set up the REST API module to expose your game data via the relay.</p>`,
+          buttons: [
+            { action: "pair", icon: 'fas fa-link', label: "Pair", default: true, callback: () => openConnectionDialog() },
+            { action: "later", label: "Later" },
+            { action: "never", label: "Don't Ask Again", callback: async () => { await game.user?.setFlag(moduleId, FLAG_SKIP_SETUP_PROMPT, true); } },
+          ],
         }).render(true);
       }
     }

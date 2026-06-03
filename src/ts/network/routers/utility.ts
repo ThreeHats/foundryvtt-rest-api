@@ -195,6 +195,33 @@ router.addRoute({
 });
 
 router.addRoute({
+  actionType: "server-url",
+  handler: async (data, context) => {
+    const socketManager = context?.socketManager;
+    ModuleLogger.info(`Received server-url request`);
+    try {
+      const { user, shouldReturn } = resolveRequestUser(data, socketManager, "server-url-result");
+      if (shouldReturn) return;
+      if (user) {
+        assertGM(user, "get the server URL");
+      }
+      socketManager?.send({
+        type: "server-url-result",
+        requestId: data.requestId,
+        data: { publicUrl: window.location.origin },
+      });
+    } catch (error) {
+      ModuleLogger.error(`Error in server-url:`, error);
+      socketManager?.send({
+        type: "server-url-result",
+        requestId: data.requestId,
+        error: (error as Error).message,
+      });
+    }
+  }
+});
+
+router.addRoute({
   actionType: "select",
   handler: async (data, context) => {
     const socketManager = context?.socketManager;

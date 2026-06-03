@@ -26,23 +26,23 @@ export async function checkSystem() {
 
         if (settingsValid) return;
 
-        new Dialog({
-            title: game.i18n.localize(`${CONSTANTS.MODULE_ID}.Dialog.systemfound.title`),
+        new (foundry as any).applications.api.DialogV2({
+            window: { title: game.i18n.localize(`${CONSTANTS.MODULE_ID}.Dialog.systemfound.title`) },
             content: ModuleLogger.warn(game.i18n.localize(`${CONSTANTS.MODULE_ID}.Dialog.systemfound.content`), true),
-            buttons: {
-                confirm: {
-                    icon: '<i class="fas fa-check"></i>',
+            buttons: [
+                {
+                    action: "confirm",
+                    icon: 'fas fa-check',
                     label: game.i18n.localize(`${CONSTANTS.MODULE_ID}.Dialog.systemfound.confirm`),
-                    callback: () => {
-                        applyDefaultSettings();
-                    },
+                    callback: () => { applyDefaultSettings(); },
                 },
-                cancel: {
-                    icon: '<i class="fas fa-times"></i>',
+                {
+                    action: "cancel",
+                    icon: 'fas fa-times',
                     label: game.i18n.localize("No"),
+                    default: true,
                 },
-            },
-            default: "cancel",
+            ],
         }).render(true);
 
         return game.settings.set(CONSTANTS.MODULE_ID, SETTINGS.SYSTEM_NOT_FOUND_WARNING_SHOWN, true);

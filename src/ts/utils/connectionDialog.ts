@@ -5,6 +5,33 @@ import {
 import { ModuleLogger } from "./logger";
 
 const DEFAULT_RELAY_URL = "wss://foundryrestapi.com";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const DV2 = () => (foundry as any).applications.api.DialogV2;
+
+function escHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// Escapes a relay-controlled URL for an href, or returns "#" if it isn't plain
+// http(s) — escHtml alone wouldn't block a javascript:/data: scheme.
+function safeHttpUrl(u: unknown): string {
+  return (typeof u === "string" && /^https?:\/\//i.test(u)) ? escHtml(u) : "#";
+}
+
+/**
+ * Get or create a stable random fingerprint for this Foundry server+world.
+ * Stored as a world-scoped setting so it persists across browser reloads and
+ * GM sessions. Used at pair-time to let the relay re-identify the same server
+ * even if the worldId slug collides with a different Foundry instance.
+ */
+async function getOrCreateServerFingerprint(): Promise<string> {
+  let fp = (game.settings.get(moduleId, SETTINGS.SERVER_FINGERPRINT) as string) || "";
+  if (!fp) {
+    fp = foundry.utils.randomID(32);
+    await game.settings.set(moduleId, SETTINGS.SERVER_FINGERPRINT, fp);
+  }
+  return fp;
+}
 
 /**
  * Derive the HTTP base URL for the relay from a ws/wss URL.
@@ -64,47 +91,42 @@ async function resetRelayUrl(): Promise<void> {
 
 /**
  * Prompt the user to enter a relay URL manually. Validates the input is a
- * proper ws://host or wss://host URL. Used as a recovery path when the stored
- * URL is corrupted, or when the GM is intentionally pointing at a custom relay.
+ * proper ws://host or wss://host URL.
  *
  * Returns the entered URL on confirm, or null on cancel.
  */
 async function promptForRelayUrl(currentUrl: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    new Dialog({
-      title: "Set Relay URL",
-      content: `
-        <p>Enter the WebSocket URL of your relay server. Examples:</p>
-        <ul>
-          <li><code>ws://localhost:3010</code> (local dev)</li>
-          <li><code>wss://foundryrestapi.com</code> (production)</li>
-          <li><code>wss://relay.your-domain.com</code> (self-hosted)</li>
-        </ul>
-        <div class="form-group">
-          <input type="text" id="rest-api-relay-url-input" value="${currentUrl}" style="width: 100%;" placeholder="wss://...">
-        </div>
-      `,
-      buttons: {
-        save: {
-          icon: '<i class="fas fa-save"></i>',
-          label: "Save",
-          callback: (dialogHtml: JQuery | HTMLElement) => {
-            const dh = dialogHtml instanceof HTMLElement ? $(dialogHtml) : dialogHtml;
-            const url = ((dh.find('#rest-api-relay-url-input').val() as string) || "").trim();
-            // Validate
-            if (httpBaseFromWsUrl(url) === null) {
-              ui.notifications?.error("Invalid relay URL. Must start with ws:// or wss://");
-              resolve(null);
-              return;
-            }
-            resolve(url);
-          },
+  const result = await DV2().wait({
+    window: { title: "Relay URL" },
+    content: `
+      <div class="form-group">
+        <input type="text" id="rest-api-relay-url-input" value="${escHtml(currentUrl)}" style="width:100%;" placeholder="wss://foundryrestapi.com" autofocus>
+        <p class="hint">e.g. <code>wss://foundryrestapi.com</code> or <code>ws://localhost:3010</code></p>
+      </div>
+    `,
+    buttons: [
+      {
+        action: "save",
+        label: "Save",
+        default: true,
+        // 3rd arg is the DialogV2 instance; its DOM is at `.element`.
+        callback: (_e: Event, _b: HTMLButtonElement, dialog: any) => {
+          const input = dialog?.element?.querySelector('#rest-api-relay-url-input') as HTMLInputElement;
+          return (input?.value || "").trim();
         },
-        cancel: { label: "Cancel", callback: () => resolve(null) },
       },
-      default: "save",
-    }).render(true);
-  });
+      { action: "cancel", label: "Cancel" },
+    ],
+    rejectClose: false,
+  }).catch(() => null);
+
+  if (result === null || result === "cancel") return null;
+
+  if (httpBaseFromWsUrl(result) === null) {
+    ui.notifications?.error("Invalid relay URL. Must start with ws:// or wss://");
+    return null;
+  }
+  return result;
 }
 
 /**
@@ -126,6 +148,10 @@ async function startBrowserUpgradeFlow(relayUrl: string): Promise<void> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        // Send the stored clientId so the relay identifies THIS world exactly
+        // rather than guessing by worldId — which lets the approval UI reliably
+        // exclude this world from its own cross-world target list.
+        clientId: (game.settings.get(moduleId, SETTINGS.CLIENT_ID) as string) || '',
         worldId: game.world.id,
         worldTitle: (game.world as any).title ?? game.world.id,
         systemId: game.system?.id ?? '',
@@ -147,41 +173,35 @@ async function startBrowserUpgradeFlow(relayUrl: string): Promise<void> {
     return;
   }
 
-  window.open(pairData.pairUrl, '_blank');
+  // pairUrl is relay-controlled — only open a plain http(s) URL.
+  if (/^https?:\/\//i.test(pairData.pairUrl)) window.open(pairData.pairUrl, '_blank');
 
   let pollInterval: ReturnType<typeof setInterval> | null = null;
   let resolved = false;
 
-  const dialog = new Dialog({
-    title: 'Upgrade World Permissions',
+  const dialog = new (DV2())({
+    window: { title: 'Upgrading Permissions' },
     content: `
-      <p>A browser tab has been opened to your relay dashboard.</p>
-      <p>Log in if needed, configure cross-world permissions, then click <strong>Upgrade Permissions</strong>.</p>
-      <p class="notes">
-        If the tab didn't open, <a href="${pairData.pairUrl}" target="_blank">click here</a>.
-      </p>
+      <p>Approve in the tab that opened. <a href="${safeHttpUrl(pairData.pairUrl)}" target="_blank">Click here</a> if it didn't open.</p>
       <p id="rest-api-upgrade-status" class="notes">Status: <em>Waiting…</em></p>
     `,
-    buttons: {
-      cancel: {
+    buttons: [
+      {
+        action: 'cancel',
         label: 'Cancel',
         callback: () => {
           resolved = true;
           if (pollInterval) clearInterval(pollInterval);
         },
       },
-    },
-    default: 'cancel',
-    close: () => {
-      resolved = true;
-      if (pollInterval) clearInterval(pollInterval);
-    },
+    ],
   });
   dialog.render(true);
 
   pollInterval = setInterval(async () => {
-    if (resolved) {
+    if (resolved || !dialog.rendered) {
       clearInterval(pollInterval!);
+      resolved = true;
       return;
     }
 
@@ -255,6 +275,7 @@ async function startBrowserPairingFlow(relayUrl: string): Promise<void> {
         systemTitle: (game.system as any)?.title ?? '',
         systemVersion: (game.system as any)?.version ?? '',
         foundryVersion: game.version ?? '',
+        serverFingerprint: await getOrCreateServerFingerprint(),
       }),
     });
     if (!res.ok) {
@@ -270,43 +291,37 @@ async function startBrowserPairingFlow(relayUrl: string): Promise<void> {
   }
 
   // Open the approval URL — show a link in case popup is blocked.
-  window.open(pairData.pairUrl, '_blank');
+  // pairUrl is relay-controlled — only open a plain http(s) URL.
+  if (/^https?:\/\//i.test(pairData.pairUrl)) window.open(pairData.pairUrl, '_blank');
 
   // Show a waiting dialog that auto-completes when the user approves.
   let pollInterval: ReturnType<typeof setInterval> | null = null;
   let resolved = false;
 
-  const dialog = new Dialog({
-    title: 'Waiting for Approval',
+  const dialog = new (DV2())({
+    window: { title: 'Waiting for Approval' },
     content: `
-      <p>A browser tab has been opened to your relay dashboard.</p>
-      <p>Log in if needed, then click <strong>Approve Pairing</strong>.</p>
-      <p class="notes">
-        If the tab didn't open, <a href="${pairData.pairUrl}" target="_blank">click here</a>.
-      </p>
+      <p>Approve in the tab that opened. <a href="${safeHttpUrl(pairData.pairUrl)}" target="_blank">Click here</a> if it didn't open.</p>
       <p id="rest-api-pair-status" class="notes">Status: <em>Waiting…</em></p>
     `,
-    buttons: {
-      cancel: {
+    buttons: [
+      {
+        action: 'cancel',
         label: 'Cancel',
         callback: () => {
           resolved = true;
           if (pollInterval) clearInterval(pollInterval);
         },
       },
-    },
-    default: 'cancel',
-    close: () => {
-      resolved = true;
-      if (pollInterval) clearInterval(pollInterval);
-    },
+    ],
   });
   dialog.render(true);
 
   // Poll the status endpoint every 3 seconds.
   pollInterval = setInterval(async () => {
-    if (resolved) {
+    if (resolved || !dialog.rendered) {
       clearInterval(pollInterval!);
+      resolved = true;
       return;
     }
 
@@ -348,6 +363,13 @@ async function startBrowserPairingFlow(relayUrl: string): Promise<void> {
             code: statusData.pairingCode,
             worldId: game.world.id,
             worldTitle: (game.world as any).title ?? game.world.id,
+            serverFingerprint: await getOrCreateServerFingerprint(),
+            // Send the existing clientId (if any) so the relay can reuse it on
+            // re-pair without relying on the fingerprint surviving in world settings.
+            existingClientId: (game.settings.get(moduleId, SETTINGS.CLIENT_ID) as string) || "",
+            // Send server origin to distinguish instances sharing a worldId on different ports
+            // (e.g. localhost:30000 vs localhost:30001).
+            serverOrigin: window.location.origin,
           }),
         });
         if (!pairRes.ok) {
@@ -362,15 +384,14 @@ async function startBrowserPairingFlow(relayUrl: string): Promise<void> {
         await game.settings.set(moduleId, SETTINGS.CONNECTION_TOKEN, data.token);
         await game.settings.set(moduleId, SETTINGS.CLIENT_ID, data.clientId);
         await game.settings.set(moduleId, SETTINGS.PAIRED_RELAY_URL, data.relayUrl || relayUrl);
-        ui.notifications?.info(`Successfully paired! Client ID: ${data.clientId}`);
-        new Dialog({
-          title: 'Reload Required',
-          content: '<p>Pairing complete! Reload now to connect?</p>',
-          buttons: {
-            yes: { label: 'Reload', callback: () => window.location.reload() },
-            no: { label: 'Later' },
-          },
-          default: 'yes',
+        ui.notifications?.info(`Paired! Client ID: ${data.clientId}`);
+        new (DV2())({
+          window: { title: 'Paired!' },
+          content: '<p>Pairing complete. Reload now to connect?</p>',
+          buttons: [
+            { action: 'reload', label: 'Reload', default: true, callback: () => window.location.reload() },
+            { action: 'later', label: 'Later' },
+          ],
         }).render(true);
       } catch (err) {
         ModuleLogger.error('Pairing exchange error:', err);
@@ -408,25 +429,24 @@ async function startPairingFlow(relayUrl: string): Promise<void> {
     relayUrl = newUrl;
   }
 
-  new Dialog({
-    title: "Pair with Relay",
+  await DV2().wait({
+    window: { title: "Enter Pairing Code" },
     content: `
-      <p>Enter the 6-character pairing code from your relay dashboard:</p>
-      <p class="notes">Relay: <code>${relayUrl}</code></p>
+      <p>Enter the 6-character code from your relay dashboard.</p>
       <div class="form-group">
         <input type="text" id="rest-api-pairing-code-input" maxlength="6"
-               style="text-transform: uppercase; font-size: 1.5em; text-align: center; letter-spacing: 0.3em; width: 200px;"
-               placeholder="ABC123">
+               style="text-transform:uppercase;font-size:1.5em;text-align:center;letter-spacing:0.3em;width:200px;"
+               placeholder="ABC123" autofocus>
       </div>
-      <p class="notes">Generate a code at your relay dashboard under Connection Tokens.</p>
     `,
-    buttons: {
-      pair: {
-        icon: '<i class="fas fa-link"></i>',
-        label: "Pair",
-        callback: async (dialogHtml: JQuery | HTMLElement) => {
-          const dh = dialogHtml instanceof HTMLElement ? $(dialogHtml) : dialogHtml;
-          const code = ((dh.find('#rest-api-pairing-code-input').val() as string) || '').toUpperCase().trim();
+    buttons: [
+      {
+        action: 'connect',
+        label: 'Connect',
+        default: true,
+        callback: async (_e: Event, _b: HTMLButtonElement, dialog: any) => {
+          const input = dialog?.element?.querySelector('#rest-api-pairing-code-input') as HTMLInputElement;
+          const code = (input?.value || '').toUpperCase().trim();
           if (!code || code.length !== 6) {
             ui.notifications?.error("Please enter a valid 6-character pairing code.");
             return;
@@ -435,9 +455,6 @@ async function startPairingFlow(relayUrl: string): Promise<void> {
           try {
             const httpUrl = httpBaseFromWsUrl(relayUrl);
             if (httpUrl === null) {
-              // Should be unreachable because startPairingFlow validates first,
-              // but be defensive in case the URL was modified between validation
-              // and submission.
               ui.notifications?.error(`Invalid relay URL: ${relayUrl}`);
               return;
             }
@@ -448,6 +465,9 @@ async function startPairingFlow(relayUrl: string): Promise<void> {
                 code,
                 worldId: game.world.id,
                 worldTitle: (game.world as any).title ?? game.world.id,
+                serverFingerprint: await getOrCreateServerFingerprint(),
+                existingClientId: (game.settings.get(moduleId, SETTINGS.CLIENT_ID) as string) || "",
+                serverOrigin: window.location.origin,
               }),
             });
 
@@ -460,40 +480,33 @@ async function startPairingFlow(relayUrl: string): Promise<void> {
             const data = await response.json();
             const finalRelayUrl = data.relayUrl || relayUrl;
 
-            // Save relay URL (world setting) if returned
             if (data.relayUrl) {
               await game.settings.set(moduleId, SETTINGS.WS_RELAY_URL, data.relayUrl);
             }
-
-            // Save the token to client-scope (browser localStorage, per-device,
-            // never broadcast) and the clientId/pairedRelayUrl to world settings
-            // (shared across all GMs). This is the storage split that lets a
-            // second GM "add this browser" without sharing the secret with players.
             await game.settings.set(moduleId, SETTINGS.CONNECTION_TOKEN, data.token);
             await game.settings.set(moduleId, SETTINGS.CLIENT_ID, data.clientId);
             await game.settings.set(moduleId, SETTINGS.PAIRED_RELAY_URL, finalRelayUrl);
 
-            ui.notifications?.info(`Successfully paired! Client ID: ${data.clientId}`);
+            ui.notifications?.info(`Paired! Client ID: ${data.clientId}`);
 
-            new Dialog({
-              title: "Reload Required",
-              content: "<p>Pairing complete! A reload is required to connect with the new token. Reload now?</p>",
-              buttons: {
-                yes: { label: "Reload", callback: () => window.location.reload() },
-                no: { label: "Later" }
-              },
-              default: "yes"
+            new (DV2())({
+              window: { title: 'Paired!' },
+              content: '<p>Pairing complete. Reload now to connect?</p>',
+              buttons: [
+                { action: 'reload', label: 'Reload', default: true, callback: () => window.location.reload() },
+                { action: 'later', label: 'Later' },
+              ],
             }).render(true);
           } catch (error) {
             ModuleLogger.error(`Pairing error:`, error);
             ui.notifications?.error(`Pairing failed: ${error}`);
           }
-        }
+        },
       },
-      cancel: { label: "Cancel" }
-    },
-    default: "pair"
-  }).render(true);
+      { action: 'cancel', label: 'Cancel' },
+    ],
+    rejectClose: false,
+  }).catch(() => {});
 }
 
 /**
@@ -502,9 +515,11 @@ async function startPairingFlow(relayUrl: string): Promise<void> {
  * then clear local settings.
  */
 async function unpair(): Promise<void> {
-  const confirmed = await Dialog.confirm({
-    title: "Unpair Relay",
-    content: "<p>Are you sure you want to unpair this browser from the relay? This removes your connection token from the relay's records.</p>",
+  const confirmed = await DV2().confirm({
+    window: { title: "Unpair" },
+    content: "<p>Remove this browser's connection to the relay?</p>",
+    yes: { label: "Unpair" },
+    no: { label: "Cancel" },
   });
   if (!confirmed) return;
 
@@ -536,14 +551,13 @@ async function unpair(): Promise<void> {
 
   ui.notifications?.info("Unpaired from relay. Reload to fully disconnect.");
 
-  new Dialog({
-    title: "Reload Required",
-    content: "<p>Unpaired. Reload now to fully disconnect?</p>",
-    buttons: {
-      yes: { label: "Reload", callback: () => window.location.reload() },
-      no: { label: "Later" }
-    },
-    default: "yes"
+  new (DV2())({
+    window: { title: 'Unpaired' },
+    content: '<p>Unpaired successfully. Reload now to disconnect?</p>',
+    buttons: [
+      { action: 'reload', label: 'Reload', default: true, callback: () => window.location.reload() },
+      { action: 'later', label: 'Later' },
+    ],
   }).render(true);
 }
 
@@ -560,118 +574,110 @@ export function openConnectionDialog(): void {
   const urlIsValid = httpBaseFromWsUrl(relayUrl) !== null;
 
   const statusHtml = currentToken
-    ? `<span style="color: green;">Paired</span> (Client: <code>${currentClientId || 'legacy'}</code>)`
-    : `<span style="color: orange;">Not paired</span>`;
+    ? `<span style="color:green;">Paired</span> (Client: <code>${escHtml(currentClientId || 'legacy')}</code>)`
+    : `<span style="color:orange;">Not paired</span>`;
 
   const corruptedHtml = !urlIsValid
-    ? `<p style="color: var(--color-text-hyperlink, #b33);"><b>⚠ Relay URL is invalid or corrupted.</b> Click <b>Edit URL</b> to fix it, or <b>Reset URL</b> to restore the production default.</p>`
+    ? `<p style="color:var(--color-text-hyperlink,#b33);"><b>⚠ Relay URL is invalid.</b> Use <b>Edit URL</b> to fix it or <b>Reset URL</b> to restore the default.</p>`
     : "";
 
   const mismatchHtml = (urlIsValid && currentToken && pairedUrl && pairedUrl !== relayUrl)
-    ? `<p style="color: var(--color-text-hyperlink, #b33);"><b>⚠ URL mismatch:</b> Paired URL (<code>${pairedUrl}</code>) differs from current relay URL (<code>${relayUrl}</code>). Re-pair to reconnect.</p>`
+    ? `<p style="color:var(--color-text-hyperlink,#b33);"><b>⚠ URL mismatch:</b> paired to <code>${escHtml(pairedUrl)}</code> but current relay is <code>${escHtml(relayUrl)}</code>. Re-pair to reconnect.</p>`
     : "";
 
   const content = `
-    <div style="max-height: 70vh; overflow-y: auto;">
-      <h3>Connection Status</h3>
+    <div>
       <p><b>Status:</b> ${statusHtml}</p>
-      <p><b>Current Relay:</b> <code>${relayUrl || '(none)'}</code></p>
-      ${pairedUrl ? `<p><b>Paired Relay:</b> <code>${pairedUrl}</code></p>` : ""}
+      <p><b>Relay:</b> <code>${escHtml(relayUrl) || '(none)'}</code></p>
+      ${(pairedUrl && pairedUrl !== relayUrl) ? `<p><b>Paired to:</b> <code>${escHtml(pairedUrl)}</code></p>` : ""}
       ${corruptedHtml}
       ${mismatchHtml}
-      <hr>
-      <p class="notes"><b>Pair via Browser</b> — opens a link to your relay dashboard for one-click pairing (recommended).</p>
-      <p class="notes"><b>Enter Code</b> — generate a code on the relay dashboard and enter it here manually.</p>
-      ${currentToken ? `<p class="notes"><b>Upgrade Permissions</b> — already paired but want to enable cross-world communication? Opens the relay to update permissions without creating a new token.</p>` : ""}
     </div>
   `;
 
-  const buttons: Record<string, Dialog.Button> = {
-    browserPair: {
-      icon: '<i class="fas fa-globe"></i>',
-      label: "Pair via Browser",
-      callback: () => { void startBrowserPairingFlow(relayUrl); }
+  const buttons: any[] = [
+    {
+      action: 'browserPair',
+      label: 'Pair',
+      default: true,
+      callback: () => { void startBrowserPairingFlow(relayUrl); },
     },
-    pair: {
-      icon: '<i class="fas fa-keyboard"></i>',
-      label: "Enter Code",
-      callback: () => startPairingFlow(relayUrl)
+    {
+      action: 'pair',
+      label: 'Enter Code',
+      callback: () => { void startPairingFlow(relayUrl); },
     },
-  };
+  ];
 
   if (currentToken) {
-    buttons.upgrade = {
-      icon: '<i class="fas fa-arrow-up"></i>',
-      label: "Upgrade Permissions",
-      callback: () => { void startBrowserUpgradeFlow(relayUrl); }
-    };
-  }
-
-  const dialog = new Dialog({
-    title: "REST API Connection",
-    content,
-    buttons: {
-      ...buttons,
-      unpair: {
-        icon: '<i class="fas fa-unlink"></i>',
-        label: "Unpair",
-        callback: () => { void unpair(); }
-      },
-      editUrl: {
-        icon: '<i class="fas fa-edit"></i>',
-        label: "Edit URL",
-        callback: async () => {
-          const newUrl = await promptForRelayUrl(urlIsValid ? relayUrl : DEFAULT_RELAY_URL);
-          if (!newUrl) return;
-          await game.settings.set(moduleId, SETTINGS.WS_RELAY_URL, newUrl);
-          ui.notifications?.info(`Relay URL set to ${newUrl}`);
-          // Reopen the dialog so the GM sees the updated state
-          openConnectionDialog();
-        }
-      },
-      reset: {
-        icon: '<i class="fas fa-undo"></i>',
-        label: "Reset URL",
-        callback: async () => {
-          const confirmed = await Dialog.confirm({
-            title: "Reset Relay URL",
-            content: `<p>Reset the relay URL to <code>${DEFAULT_RELAY_URL}</code> and clear all connection flags? You will need to re-pair after this.</p>`,
-          });
-          if (!confirmed) return;
-          await resetRelayUrl();
-          openConnectionDialog();
-        }
-      },
-      close: { label: "Close" }
-    },
-    default: "browserPair"
-  }, { width: 560 } as any);
-
-  dialog.render(true);
-}
-
-/**
- * Minimal FormApplication stub so that `game.settings.registerMenu` can open
- * the connection dialog from the Foundry settings UI.
- */
-export class ConnectionSettingsApp extends (FormApplication as any) {
-  static get defaultOptions() {
-    return foundry.utils.mergeObject((FormApplication as any).defaultOptions, {
-      id: "rest-api-connection-settings",
-      title: "REST API Connection",
-      template: "templates/generic/form.html",
-      width: 400,
-      height: "auto",
-      closeOnSubmit: true
+    buttons.push({
+      action: 'upgrade',
+      label: 'Upgrade',
+      callback: () => { void startBrowserUpgradeFlow(relayUrl); },
     });
   }
 
-  getData() { return {}; }
+  buttons.push(
+    {
+      action: 'unpair',
+      label: 'Unpair',
+      callback: () => { void unpair(); },
+    },
+    {
+      action: 'editUrl',
+      label: 'Edit URL',
+      callback: async () => {
+        const newUrl = await promptForRelayUrl(urlIsValid ? relayUrl : DEFAULT_RELAY_URL);
+        if (!newUrl) return;
+        await game.settings.set(moduleId, SETTINGS.WS_RELAY_URL, newUrl);
+        ui.notifications?.info(`Relay URL set to ${newUrl}`);
+        openConnectionDialog();
+      },
+    },
+    {
+      action: 'reset',
+      label: 'Reset URL',
+      callback: async () => {
+        const confirmed = await DV2().confirm({
+          window: { title: "Reset URL" },
+          content: `<p>Reset to <code>${DEFAULT_RELAY_URL}</code> and clear all pairing data?</p>`,
+        });
+        if (!confirmed) return;
+        await resetRelayUrl();
+        openConnectionDialog();
+      },
+    },
+    {
+      action: 'close',
+      label: 'Close',
+    },
+  );
+
+  new (DV2())({
+    window: { title: "REST API Connection" },
+    position: { width: 560 },
+    // V12 forces dialog footers to a single non-wrapping row — this class lets
+    // our many buttons wrap (see style.scss). V13+ wraps natively.
+    classes: ["rest-api-connection-dialog"],
+    content,
+    buttons,
+  }).render(true);
+}
+
+/**
+ * Minimal ApplicationV2 stub so that `game.settings.registerMenu` can open
+ * the connection dialog from the Foundry settings UI.
+ */
+export class ConnectionSettingsApp extends ((foundry as any).applications.api.ApplicationV2) {
+  static DEFAULT_OPTIONS = {
+    id: "rest-api-connection-settings",
+    window: { title: "REST API Connection" },
+  };
+
+  protected async _renderHTML(): Promise<string> { return ""; }
 
   render(_force?: boolean, _options?: any): any {
     openConnectionDialog();
     return this;
   }
-
-  async _updateObject(_event: Event, _formData: any) { /* no-op */ }
 }

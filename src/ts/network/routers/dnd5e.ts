@@ -45,6 +45,22 @@ Hooks.once('init', () => {
 
                     if (details.includes("spells")) {
                         results.spells = actor.items.filter((i: any) => i.type === 'spell');
+                        const spellData = (actor.system as any).spells ?? {};
+                        results.spellSlots = {};
+                        for (let i = 1; i <= 9; i++) {
+                            const key = `spell${i}`;
+                            if (spellData[key]?.max > 0) {
+                                results.spellSlots[key] = { value: spellData[key].value ?? 0, max: spellData[key].max ?? 0 };
+                            }
+                        }
+                        // Warlock Pact Magic is stored separately under spells.pact, not spell1..9.
+                        if (spellData.pact?.max > 0) {
+                            results.spellSlots.pact = {
+                                value: spellData.pact.value ?? 0,
+                                max: spellData.pact.max ?? 0,
+                                level: spellData.pact.level ?? 0,
+                            };
+                        }
                     }
 
                     if (details.includes("items")) {
@@ -52,7 +68,7 @@ Hooks.once('init', () => {
                     }
 
                     if (details.includes("features")) {
-                        results.features = actor.items.filter((i: any) => ['feat', 'background', 'class'].includes(i.type));
+                        results.features = actor.items.filter((i: any) => ['feat', 'background', 'class', 'subclass'].includes(i.type));
                     }
 
                     if (details.includes("stats")) {
@@ -73,6 +89,16 @@ Hooks.once('init', () => {
                             speed: actor.system.attributes.movement.walk ?? 0,
                             exhaustion: actor.system.attributes.exhaustion ?? 0,
                             inspiration: actor.system.attributes.inspiration ?? false,
+                            initBonus: (actor.system.attributes.init as any)?.total ?? (actor.system.abilities as any)?.dex?.mod ?? 0,
+                            deathSaves: {
+                                success: (actor.system.attributes.death as any)?.success ?? 0,
+                                failure: (actor.system.attributes.death as any)?.failure ?? 0,
+                            },
+                            encumbrance: {
+                                value: (actor.system.attributes.encumbrance as any)?.value ?? 0,
+                                max: (actor.system.attributes.encumbrance as any)?.max ?? 0,
+                            },
+                            currency: (actor.system as any).currency ?? {},
                         };
                     }
 
@@ -126,6 +152,13 @@ Hooks.once('init', () => {
                             hair: d.hair ?? '',
                             faith: d.faith ?? '',
                             gender: d.gender ?? '',
+                            trait: (d as any).trait ?? '',
+                            ideal: (d as any).ideal ?? '',
+                            bond: (d as any).bond ?? '',
+                            flaw: (d as any).flaw ?? '',
+                            notes: typeof (d as any).notes === 'object' ? ((d as any).notes?.value ?? '') : ((d as any).notes ?? ''),
+                            journal: (d as any).journal ?? '',
+                            goals: (d as any).goals ?? '',
                         };
                     }
 

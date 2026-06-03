@@ -3,8 +3,7 @@ import type { WebSocketManager } from "./webSocketManager";
 
 // remoteRequest.ts implements the cross-world tunnel CLIENT side. It's the
 // public API exported as `module.api.remoteRequest(...)` that other modules
-// (like the server-to-server transfer module) call to invoke actions on
-// other Foundry worlds owned by the same relay account.
+// call to invoke actions on other Foundry worlds owned by the same relay account.
 //
 // Architecture:
 //   1. Source module calls module.api.remoteRequest(targetClientId, action, payload)

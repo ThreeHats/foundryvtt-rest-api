@@ -46,6 +46,7 @@ export const SETTINGS = {
     CLIENT_ID: "clientId",                // world scope, non-secret opaque ID
     PAIRED_RELAY_URL: "pairedRelayUrl",   // world scope, non-secret URL
     CONNECTION_TOKEN: "connectionToken",  // CLIENT scope, the actual secret
+    SERVER_FINGERPRINT: "serverFingerprint", // world scope, stable per-server identity for re-pair matching
 
     // Security settings
     CODE_EXECUTION_PERMISSION: "codeExecutionPermission",
@@ -127,6 +128,13 @@ export const SETTINGS = {
         // read them but learning the opaque clientId or relay URL doesn't
         // grant any access.
         [SETTINGS.CLIENT_ID]: {
+            scope: "world",
+            config: false,
+            type: String,
+            default: ""
+        },
+
+        [SETTINGS.SERVER_FINGERPRINT]: {
             scope: "world",
             config: false,
             type: String,

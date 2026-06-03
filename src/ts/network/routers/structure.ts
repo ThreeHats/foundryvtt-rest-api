@@ -377,7 +377,16 @@ router.addRoute({
         folderData.folder = data.parentFolderId;
       }
 
-      const folder = await Folder.create(folderData);
+      const createOptions: any = {};
+      // Reuse an existing folder with this id (create with keepId would throw on it).
+      let folder: Folder | null | undefined = data.folderId ? game.folders?.get(data.folderId) : null;
+      if (data.folderId && !folder) {
+        folderData._id = data.folderId;
+        createOptions.keepId = true;
+      }
+      if (!folder) {
+        folder = await Folder.create(folderData, createOptions);
+      }
 
       socketManager?.send({
         type: "create-folder-result",

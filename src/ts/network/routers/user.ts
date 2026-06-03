@@ -136,6 +136,11 @@ router.addRoute({
             if (data.password) {
                 createData.password = data.password;
             }
+            if (data.character) {
+                // User#character wants a bare Actor _id; accept an "Actor.<id>" uuid too.
+                const raw = String(data.character);
+                createData.character = raw.includes(".") ? raw.split(".").pop() : raw;
+            }
 
             const created = await (User as any).create(createData);
             if (!created) {
