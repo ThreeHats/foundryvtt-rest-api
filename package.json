@@ -28,15 +28,5 @@
     "file-saver": "^2.0.5",
     "html-to-image": "^1.11.13",
     "jszip": "^3.10.1"
-  },
-  "pnpm": {
-    "overrides": {
-      "socket.io-parser": ">=4.2.3",
-      "ws": ">=8.18.0",
-      "tinymce": ">=7.0.0",
-      "esbuild": ">=0.25.0",
-      "parseuri": ">=0.0.6",
-      "glob": ">=10.5.0"
-    }
   }
 }
