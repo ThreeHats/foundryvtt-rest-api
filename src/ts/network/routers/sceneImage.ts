@@ -48,6 +48,8 @@ router.addRoute({
         ModuleLogger.info(`Received scene-screenshot request:`, data);
 
         await withScreenshotLock(async () => {
+        const userId = data.userId as string | undefined;
+        let prevControlledIds: string[] = [];
         try {
             const { shouldReturn } = resolveRequestUser(data, socketManager, "scene-screenshot-result");
             if (shouldReturn) return;
@@ -59,6 +61,24 @@ router.addRoute({
             // The canvas must be showing this scene
             if (canvas?.scene?.id !== scene.id) {
                 throw new Error(`Scene '${scene.name}' is not the currently viewed scene. Switch to it first.`);
+            }
+
+            // Token selection for userId-based perspective (renders fog-of-war from that player's view)
+            if (userId && (canvas as any)?.tokens) {
+                const tokens = (canvas as any).tokens;
+                const user = (game.users as any)?.get(userId)
+                          ?? (game.users as any)?.find((u: any) => u.name === userId || u.id === userId);
+                prevControlledIds = tokens.controlled?.map((t: any) => t.id) ?? [];
+                tokens.releaseAll();
+                if (user) {
+                    tokens.placeables
+                        ?.filter((t: any) => {
+                            const own = t.actor?.ownership ?? {};
+                            return (own[user.id] ?? own.default ?? 0) >= 3;
+                        })
+                        .forEach((t: any) => t.control({ releaseOthers: false }));
+                }
+                await new Promise(r => setTimeout(r, 80));
             }
 
             const fmt = format || "png";
@@ -198,6 +218,16 @@ router.addRoute({
                 obj.visible = prev;
             }
 
+            // Restore original token selection
+            if (userId && (canvas as any)?.tokens) {
+                const tokens = (canvas as any).tokens;
+                tokens.releaseAll();
+                for (const id of prevControlledIds) {
+                    const t = tokens.get?.(id);
+                    if (t) t.control({ releaseOthers: false });
+                }
+            }
+
             const mimeType = fmt === "jpeg" ? "image/jpeg" : "image/png";
 
             socketManager?.send({
@@ -209,6 +239,17 @@ router.addRoute({
                 height: outHeight,
             });
         } catch (error) {
+            // Restore token selection on error
+            if (userId && (canvas as any)?.tokens) {
+                try {
+                    const tokens = (canvas as any).tokens;
+                    tokens.releaseAll();
+                    for (const id of prevControlledIds) {
+                        const t = tokens.get?.(id);
+                        if (t) t.control({ releaseOthers: false });
+                    }
+                } catch (_) {}
+            }
             ModuleLogger.error(`Error in scene-screenshot:`, error);
             socketManager?.send({
                 type: "scene-screenshot-result",

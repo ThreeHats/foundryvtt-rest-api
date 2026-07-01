@@ -2,6 +2,18 @@
 
 All notable changes to the FoundryVTT REST API module are documented here.
 
+## [3.4.0] 2026-07-01
+
+### Added
+- **Attack & damage roll results from `use-ability`** (D&D 5e, Foundry v13): using a weapon/ability that has an attack now captures and returns the attack roll (`roll`: `total`, `formula`, `isCritical`, `isFumble`, and per-die `dice`) and the damage rolls (`damageRolls[]`: `total`, `formula`, `type`, `isCritical`, `dice`). Works both with **midi-qol** active (driven through its fast-forward roll pipeline, with pre-roll failure reasons such as out-of-range surfaced as errors) and on the native dnd5e roll pipeline. Features/spells/items with no attack still resolve as before.
+- **Target by name in `use-ability`**: a `targetName` is matched (case-insensitive) against token or actor names on the active scene when no `targetUuid` is given.
+- **Combatant names in combat events**: combat SSE events now include each combatant's `name` and the combat's `started` flag; `combatant-add`/`combatant-remove` events include `name`; the combat `end` event includes the final `round`. Combatant lists are built from `combat.turns` (initiative-sorted) instead of `combat.combatants` (creation order).
+- **`scene-activate` event**: the scene channel now emits `scene-activate` (with the scene `name`) when a scene is activated.
+- **Per-player screenshot perspective** (`scene-screenshot`): an optional `userId` renders the screenshot from that player's vantage — fog-of-war/vision — by temporarily controlling that user's owned tokens, restoring the prior token selection afterward (including on error).
+
+### Changed
+- **Combat turn/round tracking now uses the `updateCombat` hook** (filtered to turn/round changes) instead of the separate `combatTurn`/`combatRound` hooks. On Foundry v13 those only fired at round boundaries, so within-round turn advances were missed; the "Begin Combat" transition is still handled by `combatStart`.
+
 ## [3.2.0] — 2026-06-03
 
 ### Added

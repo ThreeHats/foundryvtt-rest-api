@@ -219,6 +219,16 @@ export function enableEventChannel(channel: string): void {
       break;
 
     case "combat-events":
+      // Helper: combat.turns is the initiative-sorted array; combat.combatants is unsorted creation order.
+      const mapTurns = (combat: any) =>
+        combat.turns?.map((c: any) => ({
+          id: c.id,
+          name: c.name,
+          initiative: c.initiative,
+          defeated: c.defeated,
+          uuid: c.uuid,
+        })) || [];
+
       reg("combatStart", (combat: any) => {
         const sm = getConnectedSocketManager();
         if (!sm) return;
@@ -229,18 +239,20 @@ export function enableEventChannel(channel: string): void {
             encounterId: combat.id,
             round: combat.round,
             turn: combat.turn,
-            combatants: combat.combatants?.map((c: any) => ({
-              id: c.id,
-              initiative: c.initiative,
-              defeated: c.defeated,
-              uuid: c.uuid,
-            })) || [],
+            started: combat.started,
+            combatants: mapTurns(combat),
           },
         });
       });
-      reg("combatTurn", (combat: any) => {
+      // updateCombat fires for every combat document update, including within-round turn advances.
+      // combatTurn in Foundry v13 only fires at round boundaries, so we use updateCombat instead.
+      reg("updateCombat", (combat: any, changed: any) => {
         const sm = getConnectedSocketManager();
         if (!sm) return;
+        // Skip updates that aren't turn/round advances (e.g. initiative changes, HP updates)
+        if (!("turn" in changed) && !("round" in changed)) return;
+        // Skip the "Begin Combat" transition (started: false → true) — handled by combatStart
+        if ("started" in changed) return;
         sm.send({
           type: "combat-event",
           data: {
@@ -248,31 +260,8 @@ export function enableEventChannel(channel: string): void {
             encounterId: combat.id,
             round: combat.round,
             turn: combat.turn,
-            combatants: combat.combatants?.map((c: any) => ({
-              id: c.id,
-              initiative: c.initiative,
-              defeated: c.defeated,
-              uuid: c.uuid,
-            })) || [],
-          },
-        });
-      });
-      reg("combatRound", (combat: any) => {
-        const sm = getConnectedSocketManager();
-        if (!sm) return;
-        sm.send({
-          type: "combat-event",
-          data: {
-            eventType: "round",
-            encounterId: combat.id,
-            round: combat.round,
-            turn: combat.turn,
-            combatants: combat.combatants?.map((c: any) => ({
-              id: c.id,
-              initiative: c.initiative,
-              defeated: c.defeated,
-              uuid: c.uuid,
-            })) || [],
+            started: combat.started,
+            combatants: mapTurns(combat),
           },
         });
       });
@@ -284,7 +273,7 @@ export function enableEventChannel(channel: string): void {
           data: {
             eventType: "combatant-add",
             encounterId: combatant.combat.id,
-            combatant: { id: combatant.id, initiative: combatant.initiative, defeated: combatant.defeated, uuid: combatant.uuid },
+            combatant: { id: combatant.id, name: combatant.name, initiative: combatant.initiative, defeated: combatant.defeated, uuid: combatant.uuid },
           },
         });
       });
@@ -296,7 +285,7 @@ export function enableEventChannel(channel: string): void {
           data: {
             eventType: "combatant-remove",
             encounterId: combatant.combat.id,
-            combatant: { id: combatant.id, initiative: combatant.initiative, defeated: combatant.defeated, uuid: combatant.uuid },
+            combatant: { id: combatant.id, name: combatant.name, initiative: combatant.initiative, defeated: combatant.defeated, uuid: combatant.uuid },
           },
         });
       });
@@ -305,7 +294,7 @@ export function enableEventChannel(channel: string): void {
         if (!sm) return;
         sm.send({
           type: "combat-event",
-          data: { eventType: "end", encounterId: combat.id },
+          data: { eventType: "end", encounterId: combat.id, round: combat.round },
         });
       });
       break;
@@ -391,6 +380,9 @@ export function enableEventChannel(channel: string): void {
       );
       reg("deleteWall", (wall: any) =>
         sendSceneEvent(wall.parent, "wall-delete", { wallId: wall.id })
+      );
+      reg("activateScene", (scene: any) =>
+        sendSceneEvent(scene, "scene-activate", { name: scene.name })
       );
       break;
 

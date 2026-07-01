@@ -278,7 +278,7 @@ Hooks.once('init', () => {
                 const { user, shouldReturn } = resolveRequestUser(data, socketManager, `${actionType}-result`);
                 if (shouldReturn) return;
 
-                const { actorUuid, abilityUuid, abilityName, targetUuid } = data;
+                const { actorUuid, abilityUuid, abilityName, targetUuid, targetName } = data;
                 if (!actorUuid) throw new Error("actorUuid is required");
                 if (!abilityUuid && !abilityName) throw new Error("abilityUuid or abilityName is required");
 
@@ -316,33 +316,159 @@ Hooks.once('init', () => {
 
                 if (!ability) throw new Error(`Ability not found on actor ${actor.name}`);
 
-                let targetToken = null;
+                // Resolve target by UUID or by name on the active scene
+                let targetToken: any = null;
                 if (targetUuid) {
                     const targetDoc: any = await fromUuid(targetUuid);
-                    if (targetDoc && targetDoc.documentName === "Token") {
+                    if (targetDoc?.documentName === "Token") {
                         targetToken = targetDoc;
-                    } else if (targetDoc && targetDoc.documentName === "Actor") {
+                    } else if (targetDoc?.documentName === "Actor") {
                         const scene = game.scenes?.active;
-                        if (scene) {
-                            const tokens = scene.tokens?.filter(t => t.actor?.id === targetDoc.id);
-                            if (tokens && tokens.length > 0) {
-                                targetToken = tokens[0];
-                            }
-                        }
-                    }
-                    if (targetToken && canvas?.tokens) {
-                        game.user?.targets.forEach(t => t.setTarget(false, { releaseOthers: false }));
-                        const tokenObject = canvas.tokens.get(targetToken.id);
-                        if(tokenObject) {
-                            tokenObject.setTarget(true, { releaseOthers: true });
-                        }
+                        const tokens = scene?.tokens?.filter((t: any) => t.actor?.id === targetDoc.id) ?? [];
+                        if (tokens.length > 0) targetToken = tokens[0];
                     }
                 }
+                if (!targetToken && targetName) {
+                    const scene = game.scenes?.active;
+                    const nameLower = (targetName as string).toLowerCase();
+                    targetToken = scene?.tokens?.find((t: any) =>
+                        t.name?.toLowerCase() === nameLower ||
+                        t.actor?.name?.toLowerCase() === nameLower
+                    ) ?? null;
+                }
+                if (targetToken && canvas?.tokens) {
+                    game.user?.targets.forEach((t: any) => t.setTarget(false, { releaseOthers: false }));
+                    const tokenObj = canvas.tokens.get(targetToken.id);
+                    if (tokenObj) tokenObj.setTarget(true, { releaseOthers: true });
+                }
 
-                // Skip configuration dialogs (spell slot selection, etc.)
-                // v12 dnd5e: use(config, { configureDialog: false })
-                // v13 dnd5e: use(usage, { configure: false }, message)
-                const useResult = await ability.use({}, { configure: false, configureDialog: false });
+                const isV13Use = getFoundryVersionMajor() >= 13;
+                let capturedAttackRoll: any = null;
+                let capturedDamageRolls: any[] = [];
+
+                if (isV13Use) {
+                    const activities = (ability.system as any)?.activities;
+                    const activity = activities?.size > 0 ? [...activities.values()][0] : null;
+                    const hasAttackRoll = activity && typeof activity.rollAttack === 'function';
+                    const midiActive = !!(game as any).modules?.get?.('midi-qol')?.active;
+
+                    if (hasAttackRoll) {
+                        let resolveAttack!: () => void;
+                        let resolveDamage!: () => void;
+                        const attackFired = new Promise<void>(r => { resolveAttack = r; });
+                        const damageFired = new Promise<void>(r => { resolveDamage = r; });
+
+                        const attackHookId = Hooks.once('dnd5e.rollAttackV2', (rolls: any[]) => {
+                            ModuleLogger.info(`[attack] dnd5e.rollAttackV2 fired, rolls:`, rolls?.length, rolls?.[0]?.total);
+                            if (rolls.length > 0) capturedAttackRoll = rolls[0];
+                            resolveAttack();
+                        });
+                        const damageHookId = Hooks.once('dnd5e.rollDamageV2', (rolls: any[]) => {
+                            ModuleLogger.info(`[attack] dnd5e.rollDamageV2 fired, rolls:`, rolls?.length, rolls);
+                            capturedDamageRolls = rolls ?? [];
+                            resolveDamage();
+                        });
+
+                        try {
+                            if (midiActive) {
+                                // Intercept Foundry notifications during use() so we can surface
+                                // midi-qol's pre-roll failure reasons (range, no ammo, etc.) to Discord.
+                                const capturedWarnings: string[] = [];
+                                const notif = (ui as any).notifications;
+                                const origWarn  = notif?.warn?.bind(notif);
+                                const origError = notif?.error?.bind(notif);
+                                if (notif) {
+                                    notif.warn  = (msg: string, opts?: any) => { capturedWarnings.push(msg); return origWarn?.(msg, opts); };
+                                    notif.error = (msg: string, opts?: any) => { capturedWarnings.push(msg); return origError?.(msg, opts); };
+                                }
+
+                                let useResult: any;
+                                try {
+                                    // midi-qol manages attack/damage through its own async state machine.
+                                    // autoRollDamage:"always" bypasses the miss-check gate so damage
+                                    // rolls unconditionally regardless of hit/miss or target state.
+                                    useResult = await activity.use(
+                                        { midiOptions: { fastForwardAttack: true, fastForwardDamage: true, autoRollDamage: "always" } },
+                                        { configure: false },
+                                        {}
+                                    );
+                                } finally {
+                                    if (notif) {
+                                        if (origWarn)  notif.warn  = origWarn;
+                                        if (origError) notif.error = origError;
+                                    }
+                                }
+
+                                if (!useResult) {
+                                    // midi-qol returns false when a pre-roll check fails
+                                    // (range too far, no spell slots, etc.)
+                                    throw new Error(capturedWarnings[0] ?? "Action could not be performed");
+                                }
+
+                                ModuleLogger.info(`[attack] midi-qol use() returned, waiting for attackFired...`);
+                                await Promise.race([attackFired, new Promise<void>(r => setTimeout(r, 8000))]);
+                                ModuleLogger.info(`[attack] attackFired resolved, capturedAttackRoll:`, capturedAttackRoll?.total);
+
+                                if (!capturedAttackRoll) {
+                                    throw new Error(capturedWarnings[0] ?? "Attack roll did not complete");
+                                }
+
+                                ModuleLogger.info(`[attack] waiting for damageFired...`);
+                                await Promise.race([damageFired, new Promise<void>(r => setTimeout(r, 6000))]);
+                                ModuleLogger.info(`[attack] damageFired resolved, capturedDamageRolls:`, capturedDamageRolls.length);
+                            } else {
+                                // Without midi-qol: post the item card then call rollAttack directly.
+                                // subsequentActions:false prevents dnd5e from also calling rollAttack
+                                // inside _triggerSubsequentActions (would double-roll).
+                                // dnd5e.rollAttackV2 fires synchronously inside rollAttack so
+                                // capturedAttackRoll is set before the await resolves.
+                                const useResult = await activity.use({ subsequentActions: false }, { configure: false }, {});
+                                if (!useResult) throw new Error("Action could not be performed");
+                                await activity.rollAttack({}, { configure: false }, {});
+                            }
+                        } finally {
+                            Hooks.off('dnd5e.rollAttackV2', attackHookId);
+                            Hooks.off('dnd5e.rollDamageV2', damageHookId);
+                        }
+                    } else {
+                        // Feature/spell/item — no attack roll, just use() with dialog suppressed.
+                        // dnd5e.preRollAttack fires synchronously inside buildConfigure() before
+                        // it checks dialog.configure, so we suppress it via hook.
+                        const hookId = Hooks.once('dnd5e.preRollAttack', (_rc: any, dc: any) => {
+                            dc.configure = false;
+                        });
+                        try {
+                            await (activity ?? ability).use({}, { configure: false }, {});
+                        } finally {
+                            Hooks.off('dnd5e.preRollAttack', hookId);
+                        }
+                    }
+                } else {
+                    await ability.use({}, { configure: false, configureDialog: false });
+                }
+
+                const serializeDice = (roll: any) => roll?.dice?.map((d: any) => ({
+                    faces: d.faces,
+                    results: d.results?.map((r: any) => ({ result: r.result, active: r.active !== false })),
+                })) ?? [];
+
+                const rollPayload = capturedAttackRoll ? {
+                    total: capturedAttackRoll.total,
+                    formula: capturedAttackRoll.formula,
+                    isCritical: capturedAttackRoll.isCritical ?? false,
+                    isFumble: capturedAttackRoll.isFumble ?? false,
+                    dice: serializeDice(capturedAttackRoll),
+                } : null;
+
+                const damagePayload = capturedDamageRolls.length > 0
+                    ? capturedDamageRolls.map((r: any) => ({
+                        total: r.total,
+                        formula: r.formula,
+                        type: r.options?.type ?? r.options?.types?.[0] ?? null,
+                        isCritical: r.isCritical ?? false,
+                        dice: serializeDice(r),
+                    }))
+                    : null;
 
                 socketManager?.send({
                     type: `${actionType}-result`,
@@ -350,7 +476,8 @@ Hooks.once('init', () => {
                     data: {
                         uuid: actorUuid,
                         ability: ability.name,
-                        result: useResult ? useResult.id : null
+                        ...(rollPayload ? { roll: rollPayload } : {}),
+                        ...(damagePayload ? { damageRolls: damagePayload } : {}),
                     },
                 });
 
