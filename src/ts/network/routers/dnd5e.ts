@@ -1,9 +1,13 @@
 import { Router } from "./baseRouter";
 import { ModuleLogger } from "../../utils/logger";
 import { resolveRequestUser, serializeWithPermission, assertWritePermission } from "../../utils/permissions";
-import { getFoundryVersionMajor } from "../../utils/version";
+import { getFoundryVersionMajor, getSystemVersion } from "../../utils/version";
 
 export const router = new Router("dnd5eRouter");
+
+function getDnd5eMajor(): number {
+    return parseInt((getSystemVersion() || "0").split(".")[0], 10) || 0;
+}
 
 Hooks.once('init', () => {
     const isDnd5e = game.system.id === "dnd5e";
@@ -717,8 +721,19 @@ Hooks.once('init', () => {
 
                     let roll: any;
                     const isV13 = getFoundryVersionMajor() >= 13;
+                    const isDnd5eV5 = getDnd5eMajor() >= 5;
 
-                    if (isV13) {
+                    if (isDnd5eV5) {
+                        // dnd5e v5: advantage/disadvantage move into the config; the dialog
+                        // is skipped with configure:false and message.create must be explicit.
+                        const config: any = { skill };
+                        if (advantage) config.advantage = true;
+                        if (disadvantage) config.disadvantage = true;
+                        if (bonus) config.rolls = [{ parts: [bonus] }];
+
+                        const rolls = await actor.rollSkill(config, { configure: false }, { create: createChatMessage === true });
+                        roll = Array.isArray(rolls) ? rolls[0] : rolls;
+                    } else if (isV13) {
                         // dnd5e v4 (Foundry v13): rollSkill(config, dialog, message)
                         const config: any = { skill };
                         if (bonus) config.rolls = [{ parts: [bonus] }];
@@ -803,8 +818,18 @@ Hooks.once('init', () => {
 
                     let roll: any;
                     const isV13 = getFoundryVersionMajor() >= 13;
+                    const isDnd5eV5 = getDnd5eMajor() >= 5;
 
-                    if (isV13) {
+                    if (isDnd5eV5) {
+                        // dnd5e v5: advantage in config, dialog skipped, explicit message.create.
+                        const config: any = { ability };
+                        if (advantage) config.advantage = true;
+                        if (disadvantage) config.disadvantage = true;
+                        if (bonus) config.rolls = [{ parts: [bonus] }];
+
+                        const rolls = await actor.rollSavingThrow(config, { configure: false }, { create: createChatMessage === true });
+                        roll = Array.isArray(rolls) ? rolls[0] : rolls;
+                    } else if (isV13) {
                         // dnd5e v4 (Foundry v13): rollSavingThrow(config, dialog, message)
                         const config: any = { ability };
                         if (bonus) config.rolls = [{ parts: [bonus] }];
@@ -889,8 +914,18 @@ Hooks.once('init', () => {
 
                     let roll: any;
                     const isV13 = getFoundryVersionMajor() >= 13;
+                    const isDnd5eV5 = getDnd5eMajor() >= 5;
 
-                    if (isV13) {
+                    if (isDnd5eV5) {
+                        // dnd5e v5: advantage in config, dialog skipped, explicit message.create.
+                        const config: any = { ability };
+                        if (advantage) config.advantage = true;
+                        if (disadvantage) config.disadvantage = true;
+                        if (bonus) config.rolls = [{ parts: [bonus] }];
+
+                        const rolls = await actor.rollAbilityCheck(config, { configure: false }, { create: createChatMessage === true });
+                        roll = Array.isArray(rolls) ? rolls[0] : rolls;
+                    } else if (isV13) {
                         // dnd5e v4 (Foundry v13): rollAbilityCheck(config, dialog, message)
                         const config: any = { ability };
                         if (bonus) config.rolls = [{ parts: [bonus] }];
@@ -966,8 +1001,18 @@ Hooks.once('init', () => {
 
                     let roll: any;
                     const isV13 = getFoundryVersionMajor() >= 13;
+                    const isDnd5eV5 = getDnd5eMajor() >= 5;
 
-                    if (isV13) {
+                    if (isDnd5eV5) {
+                        // dnd5e v5: advantage in config, dialog skipped, explicit message.create.
+                        // Passing the v4 dialog.options.advantageMode here made rollDeathSave
+                        // throw internally ("reading 'target'"), so keep the config clean.
+                        const config: any = {};
+                        if (advantage) config.advantage = true;
+
+                        const rolls = await actor.rollDeathSave(config, { configure: false }, { create: createChatMessage === true });
+                        roll = Array.isArray(rolls) ? rolls[0] : rolls;
+                    } else if (isV13) {
                         // dnd5e v4 (Foundry v13): rollDeathSave(config, dialog, message)
                         const config: any = {};
 
@@ -1182,8 +1227,18 @@ Hooks.once('init', () => {
 
                     let roll: any;
                     const isV13 = getFoundryVersionMajor() >= 13;
+                    const isDnd5eV5 = getDnd5eMajor() >= 5;
 
-                    if (isV13) {
+                    if (isDnd5eV5) {
+                        // dnd5e v5: advantage in config, dialog skipped, explicit message.create.
+                        const config: any = { ability: "con" };
+                        if (advantage) config.advantage = true;
+                        if (disadvantage) config.disadvantage = true;
+                        if (bonus) config.rolls = [{ parts: [bonus] }];
+
+                        const rolls = await actor.rollSavingThrow(config, { configure: false }, { create: createChatMessage === true });
+                        roll = Array.isArray(rolls) ? rolls[0] : rolls;
+                    } else if (isV13) {
                         const config: any = { ability: "con" };
                         if (bonus) config.rolls = [{ parts: [bonus] }];
 

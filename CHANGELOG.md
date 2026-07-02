@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to the FoundryVTT REST API module are documented here.
+## [3.4.1] 2026-7-01
+
+### Fixed
+- **D&D 5e rolls on the dnd5e 5.x system (Foundry v14)**: skill checks, ability checks, ability saves, death saves, and concentration saves came back with no `total` — and death saves threw internally (`Cannot read properties of undefined (reading 'target')`) — because the calls used the dnd5e 4.x dialog shape (`dialog.options.advantageMode`), which dnd5e 5.x no longer honors (it returns an un-evaluated roll). Rolls now branch on the **dnd5e system version** rather than the Foundry version (dnd5e 5.x runs on both v13 and v14): the 5.x path puts advantage/disadvantage in the roll config, skips the dialog with `configure: false`, and sets `message.create` explicitly. The dnd5e 3.x (positional) and 4.x paths are unchanged, so v11–v13 behavior is untouched. Verified end-to-end against Foundry v12, v13, and v14, with and without midi-qol.
+
 
 ## [3.4.0] 2026-07-01
 
